@@ -1,0 +1,54 @@
+# --- START OF FILE docker-compose.yaml ---
+
+version: '3.8'
+
+services:
+  # --- Flask Web Application (UI) ---
+  flask_app:
+    build: .
+    container_name: flask_ui_app
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+      - ${LOGS_DIRECTORY}:/app/logs
+    env_file:
+      - .env
+    command: ["flask", "run", "--host=0.0.0.0", "--port=5000"]
+    restart: unless-stopped
+    # --- START: MODIFICATION ---
+    # Assign this service to the 'ui' profile.
+    # It will only start if the 'ui' profile is active.
+    profiles:
+      - ui
+    # --- END: MODIFICATION ---
+
+  # --- FastAPI Provisioning Service ---
+  fastapi_app:
+    build: .
+    container_name: fastapi_provisioning_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ${LOGS_DIRECTORY}:/app/logs
+    env_file:
+      - .env
+    command: [
+      "uvicorn", 
+      "fastapi_app:app", 
+      "--host", "0.0.0.0", 
+      "--port", "8000", 
+      "--reload",
+      "--reload-exclude", "/app/logs/",
+      "--reload-exclude", "/app/config/"
+    ]
+    restart: unless-stopped
+    # --- START: MODIFICATION ---
+    # Assign this service to the 'api' profile.
+    # It will only start if the 'api' profile is active.
+    profiles:
+      - api
+    # --- END: MODIFICATION ---
+
+# --- END OF FILE docker-compose.yaml ---
