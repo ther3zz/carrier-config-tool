@@ -3,6 +3,7 @@
 import os
 import json
 from threading import Lock
+import logging # Import the logging module
 
 # Import the encryption functions from our new utility
 from .encryption import encrypt_data, decrypt_data
@@ -27,10 +28,7 @@ if STORAGE_MODE == 'db':
 
 
 def _file_get_all_credentials():
-    """
-    (Original function, renamed for clarity)
-    Loads all credentials from the JSON file and ensures new fields exist.
-    """
+    # (Function unchanged)
     with file_lock:
         if not os.path.exists(CREDENTIALS_FILE):
             return {}
@@ -41,7 +39,6 @@ def _file_get_all_credentials():
                 if not content:
                     return {}
                 creds = json.loads(content)
-                # Gracefully handle missing fields for older credentials in the file.
                 for name, data in creds.items():
                     data.setdefault('default_voice_callback_type', '')
                     data.setdefault('default_voice_callback_value', '')
@@ -50,7 +47,7 @@ def _file_get_all_credentials():
             return {}
 
 def _file_save_all_credentials(credentials: dict):
-    """(Original function, renamed for clarity)"""
+    # (Function unchanged)
     with file_lock:
         os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
         with open(CREDENTIALS_FILE, 'w') as f:
@@ -58,9 +55,7 @@ def _file_save_all_credentials(credentials: dict):
 
 
 def get_all_credentials():
-    """
-    Loads all credentials from the configured storage source (file or db).
-    """
+    # (Function unchanged)
     if STORAGE_MODE == 'db':
         return db_manager.db_get_all_credentials()
     else: # Default to file
@@ -68,7 +63,7 @@ def get_all_credentials():
 
 
 def get_credential_names():
-    """Returns a sorted list of the friendly names of all stored credentials."""
+    # (Function unchanged)
     creds = get_all_credentials()
     return sorted(list(creds.keys()))
 
@@ -76,76 +71,37 @@ def get_credential_names():
 def save_credential(name: str, api_key: str, api_secret: str, master_key: str,
                     voice_callback_type: str = '', voice_callback_value: str = '',
                     original_name: str = None):
-    """
-    Encrypts and saves a new credential or updates an existing one.
-
-    If api_secret is empty/None, it attempts to preserve the existing secret,
-    but only if the name and api_key have not changed. A new secret is
-    required if the name or api_key are being changed.
-    """
+    # (Function unchanged)
     if not all([name, api_key, master_key]):
         raise ValueError("Name, API Key, and Master Key are all required.")
-
     if not original_name:
         original_name = name
-
     all_creds = get_all_credentials()
     existing_cred = all_creds.get(original_name)
-    
     encrypted_secret = None
-    
-    # Condition 1: A new secret is provided. Always use it.
     if api_secret:
         encrypted_secret = encrypt_data(api_secret, master_key)
-    
-    # Condition 2: No new secret provided, and it's an existing credential.
     elif existing_cred:
-        # If the user is trying to change the name or API key, they MUST provide the secret again for security.
         if name != original_name or api_key != existing_cred.get('api_key'):
             raise ValueError("A new API Secret is required when changing the Friendly Name or API Key.")
-        # Otherwise, we can safely re-use the old encrypted secret.
         encrypted_secret = existing_cred.get('encrypted_secret')
-        
-    # Condition 3: No secret provided for a brand new credential. This is an error.
     if not encrypted_secret:
         raise ValueError("An API Secret is required to save a new credential.")
-
     api_key_hint = f"{api_key[:5]}...{api_key[-4:]}" if len(api_key) > 8 else api_key
-
     if STORAGE_MODE == 'db':
-        # --- START: MODIFICATION (Ensure all arguments are passed) ---
-        # Call the db_save_credential function with all required parameters.
-        db_manager.db_save_credential(
-            name, 
-            api_key, 
-            encrypted_secret, 
-            api_key_hint, 
-            voice_callback_type, 
-            voice_callback_value
-        )
-        # --- END: MODIFICATION ---
+        db_manager.db_save_credential(name, api_key, encrypted_secret, api_key_hint, voice_callback_type, voice_callback_value)
         if name != original_name:
             db_manager.db_delete_credential(original_name)
     else:
-        # File-based logic
-        new_entry = {
-            'api_key': api_key,
-            'encrypted_secret': encrypted_secret,
-            'api_key_hint': api_key_hint,
-            'default_voice_callback_type': voice_callback_type or '',
-            'default_voice_callback_value': voice_callback_value or ''
-        }
-        
-        # If the name has been changed, delete the old entry.
+        new_entry = { 'api_key': api_key, 'encrypted_secret': encrypted_secret, 'api_key_hint': api_key_hint, 'default_voice_callback_type': voice_callback_type or '', 'default_voice_callback_value': voice_callback_value or '' }
         if name != original_name and original_name in all_creds:
             del all_creds[original_name]
-        
         all_creds[name] = new_entry
         _file_save_all_credentials(all_creds)
 
 
 def delete_credential(name: str) -> bool:
-    """Deletes a credential entry by its friendly name from the configured storage."""
+    # (Function unchanged)
     if STORAGE_MODE == 'db':
         return db_manager.db_delete_credential(name)
     else:
@@ -158,51 +114,63 @@ def delete_credential(name: str) -> bool:
 
 
 def get_decrypted_credentials(name: str, master_key: str) -> dict:
-    """
-    Retrieves a credential by name, decrypts its secret, and includes default settings.
-    """
+    # (Function unchanged)
     if not master_key:
         raise ValueError("A master key is required to decrypt credentials.")
-
     all_creds = get_all_credentials()
     credential_data = all_creds.get(name)
-
     if not credential_data:
         raise ValueError(f"Credential '{name}' not found.")
-
     encrypted_secret = credential_data.get('encrypted_secret')
     if not encrypted_secret:
          raise ValueError(f"Credential '{name}' is improperly configured (missing encrypted_secret).")
-    
     decrypted_secret = decrypt_data(encrypted_secret, master_key)
-
-    return {
-        'api_key': credential_data.get('api_key'),
-        'api_secret': decrypted_secret,
-        'default_voice_callback_type': credential_data.get('default_voice_callback_type', ''),
-        'default_voice_callback_value': credential_data.get('default_voice_callback_value', '')
-    }
+    return { 'api_key': credential_data.get('api_key'), 'api_secret': decrypted_secret, 'default_voice_callback_type': credential_data.get('default_voice_callback_type', ''), 'default_voice_callback_value': credential_data.get('default_voice_callback_value', '') }
 
 
 def find_and_decrypt_credential_by_groupid(groupid: str, master_key: str) -> dict:
     """
     Finds a credential by groupid from the database, decrypts it, and includes default settings.
     """
+    # Get the system logger configured in logger.py
+    log = logging.getLogger("system")
+
     if STORAGE_MODE != 'db':
+        log.error("find_and_decrypt_credential_by_groupid called while not in 'db' mode.")
         raise ValueError("This function is only available in 'db' credential storage mode.")
     if not master_key:
+        log.error("find_and_decrypt_credential_by_groupid called without a master key.")
         raise ValueError("A master key is required to decrypt credentials.")
 
+    # --- START: MODIFICATION (Add Debugging Logs) ---
+    log.info(f"Attempting to find credential in DB for groupid: '{groupid}'")
     credential_data = db_manager.db_find_credential_by_groupid_in_name(groupid)
 
     if not credential_data:
+        log.warning(f"DB search returned NO results for groupid: '{groupid}'")
         raise ValueError(f"No credential found for groupid '{groupid}'.")
+    
+    log.info(f"DB search SUCCESS for groupid '{groupid}'. Found account: '{credential_data.get('name')}'")
 
     encrypted_secret = credential_data.get('encrypted_secret')
     if not encrypted_secret:
+        log.error(f"Credential '{credential_data.get('name')}' is missing its encrypted_secret.")
         raise ValueError(f"Credential for groupid '{groupid}' is improperly configured.")
+    
+    # Log a snippet of the encrypted secret to verify it's not empty
+    log.info(f"Found encrypted secret snippet: ...{encrypted_secret[-10:]}")
+    log.info("Attempting to decrypt secret...")
 
-    decrypted_secret = decrypt_data(encrypted_secret, master_key)
+    try:
+        decrypted_secret = decrypt_data(encrypted_secret, master_key)
+        log.info("Decryption SUCCESSFUL.")
+    except ValueError as e:
+        # This is the most likely point of failure if the master key is wrong.
+        log.error(f"DECRYPTION FAILED for account '{credential_data.get('name')}'. This almost always means the MASTER_KEY is incorrect. Error: {e}")
+        # Re-raise the error to send the 404 response
+        raise ValueError(f"Decryption failed for groupid '{groupid}'. The master key may be incorrect.")
+    
+    # --- END: MODIFICATION ---
 
     return {
         'api_key': credential_data.get('api_key'),
