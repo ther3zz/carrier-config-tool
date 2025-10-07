@@ -30,7 +30,7 @@ EXPOSE 5000
 
 # Define environment variable (optional, good practice)
 ENV FLASK_APP=app.py
-ENV FLASK_ENV=production # Set to development for debugging
+ENV FLASK_ENV=production
 
 # Run app.py when the container launches
 # This default is overridden by the 'command' in docker-compose.yaml for each service
