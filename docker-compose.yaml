@@ -14,7 +14,6 @@ services:
       - ${LOGS_DIRECTORY}:/app/logs
     env_file:
       - .env
-    # We are not debugging this one, so we can leave its command as is.
     command: "flask run --host=0.0.0.0 --port=5000"
     restart: unless-stopped
     profiles:
@@ -31,20 +30,7 @@ services:
       - ${LOGS_DIRECTORY}:/app/logs
     env_file:
       - .env
-    # --- START: MODIFICATION (Diagnostic Command) ---
-    # This command will list files, print requirements.txt, list installed packages,
-    # and then wait. It will NOT start the uvicorn server.
-    command: >
-      sh -c "echo '--- Running Diagnostics ---' && 
-             echo '1. Listing files in /app:' && ls -l /app && 
-             echo '---' && 
-             echo '2. Contents of requirements.txt:' && cat /app/requirements.txt && 
-             echo '---' && 
-             echo '3. Packages installed in Python environment (pip freeze):' && pip freeze && 
-             echo '---' && 
-             echo 'Diagnostics complete. Sleeping...' && 
-             sleep 3600"
-    # --- END: MODIFICATION ---
+    command: "uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --reload --reload-exclude /app/logs/ --reload-exclude /app/config/"
     restart: unless-stopped
     profiles:
       - api
