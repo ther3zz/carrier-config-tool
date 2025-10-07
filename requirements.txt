@@ -2,6 +2,7 @@ Flask>=2.0
 requests>=2.25
 cryptography>=3.4
 fastapi>=0.100.0
+starlette>=0.30.0
 uvicorn[standard]>=0.22.0
 mariadb>=1.1.6
 pydantic-settings>=2.0.0
