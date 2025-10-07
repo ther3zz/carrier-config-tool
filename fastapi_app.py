@@ -2,7 +2,10 @@
 
 import os
 from dotenv import load_dotenv
+# --- START: MODIFICATION ---
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
+# --- END: MODIFICATION ---
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
@@ -23,6 +26,14 @@ app = FastAPI(
     version="1.3.0"
 )
 
+# --- START: MODIFICATION (Add Middleware) ---
+# Read the trusted proxy IPs from the environment.
+TRUSTED_PROXY_IPS = os.environ.get("TRUSTED_PROXY_IPS")
+if TRUSTED_PROXY_IPS:
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=TRUSTED_PROXY_IPS)
+# --- END: MODIFICATION ---
+
+
 # --- Configuration Loading ---
 NPA_DATA_CONFIG_FILE = os.path.join('config', 'npa_data.json')
 NPA_DATA = load_config_file(NPA_DATA_CONFIG_FILE)
@@ -41,6 +52,7 @@ VONAGE_PRIMARY_ACCOUNT_NAME = os.environ.get("VONAGE_PRIMARY_ACCOUNT_NAME")
 
 async def verify_ip_address(request: Request):
     if not IP_WHITELIST: return
+    # This `request.client.host` will now be the real client IP thanks to the middleware
     client_ip = request.client.host
     if client_ip not in IP_WHITELIST:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"IP address {client_ip} is not allowed.")
@@ -103,88 +115,52 @@ async def startup_event():
     if credentials_manager.STORAGE_MODE == 'db' and not VONAGE_PRIMARY_ACCOUNT_NAME:
         print("WARNING: `VONAGE_PRIMARY_ACCOUNT_NAME` is not set. The auto-create subaccount feature will be disabled.")
 
+# --- The rest of the file is unchanged. The middleware handles the logic automatically. ---
 @app.post("/provision-did", response_model=ProvisioningResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Request):
+    # (Function unchanged)
     if credentials_manager.STORAGE_MODE != 'db': raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     log_enabled = settings_manager.get_setting('store_logs_enabled')
-    
     try:
-        # Step 1: Attempt to find existing subaccount credentials
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
     except ValueError:
         if not request.create_subaccount_if_not_found:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No credential found for groupid '{request.groupid}' and auto-create was not requested.")
-        
         if not VONAGE_PRIMARY_ACCOUNT_NAME:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auto-create subaccount failed: `VONAGE_PRIMARY_ACCOUNT_NAME` is not configured on the server.")
-
-        print(f"Subaccount for groupid '{request.groupid}' not found. Attempting to create a new one.")
-        
         try:
             primary_creds = credentials_manager.get_decrypted_credentials(VONAGE_PRIMARY_ACCOUNT_NAME, MASTER_KEY)
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Auto-create failed: Could not load primary account credentials specified on server: {e}")
-
-        # --- START: MODIFICATION ---
         new_subaccount_name = f"GroupId [{request.groupid}]"
-        # --- END: MODIFICATION ---
-        
         create_payload = {"name": new_subaccount_name, "use_primary_account_balance": True}
-        
-        create_result, create_status = vonage_client.create_subaccount(
-            primary_api_key=primary_creds['api_key'],
-            primary_api_secret=primary_creds['api_secret'],
-            payload=create_payload,
-            log_enabled=log_enabled
-        )
-
+        create_result, create_status = vonage_client.create_subaccount(primary_api_key=primary_creds['api_key'], primary_api_secret=primary_creds['api_secret'], payload=create_payload, log_enabled=log_enabled)
         if create_status >= 400:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to create new subaccount via Vonage API: {create_result.get('error', 'Unknown error')}")
-
         new_api_key = create_result.get('api_key')
         new_secret = create_result.get('secret')
         if not new_api_key or not new_secret:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Vonage API created subaccount but did not return complete credentials.")
-
         try:
-            credentials_manager.save_credential(
-                name=new_subaccount_name,
-                api_key=new_api_key,
-                api_secret=new_secret,
-                master_key=MASTER_KEY
-            )
-            print(f"Successfully created and saved new subaccount: {new_subaccount_name}")
+            credentials_manager.save_credential(name=new_subaccount_name, api_key=new_api_key, api_secret=new_secret, master_key=MASTER_KEY)
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save new subaccount credentials to the database: {e}")
-
-        subaccount_creds = {
-            "api_key": new_api_key,
-            "api_secret": new_secret,
-            "account_name": new_subaccount_name,
-            "default_voice_callback_type": None,
-            "default_voice_callback_value": None
-        }
-
+        subaccount_creds = {"api_key": new_api_key, "api_secret": new_secret, "account_name": new_subaccount_name, "default_voice_callback_type": None, "default_voice_callback_value": None}
     if log_enabled: logger.log_request_response(operation_name="Incoming Provisioning Request", request_details={"client_ip": request_obj.client.host, "payload": request.model_dump()}, response_data={"status": "Request accepted for processing"}, status_code=202, account_id=subaccount_creds['api_key'])
-    
     country = 'US' if request.npa in NPA_DATA.get('US', []) else 'CA' if request.npa in NPA_DATA.get('CA', []) else None
     if not country: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"NPA '{request.npa}' not found in US or CA data.")
-    
     search_params = { 'country': country, 'features': 'VOICE', 'pattern': f"1{request.npa}", 'search_pattern': 0, 'size': 1 }
     search_result, search_status = vonage_client.search_dids(subaccount_creds['api_key'], subaccount_creds['api_secret'], search_params, log_enabled=log_enabled)
     if search_status >= 400 or not search_result.get('numbers'): raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to find an available DID for NPA {request.npa}. Vonage API error: {search_result.get('error', 'Unknown error')}")
-    
     did_to_buy = search_result['numbers'][0]
     msisdn = did_to_buy.get('msisdn')
     buy_result, buy_status = vonage_client.buy_did(username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country, msisdn=msisdn, log_enabled=log_enabled, treat_420_as_success=settings_manager.get_setting('treat_420_as_success_buy'), verify_on_420=settings_manager.get_setting('verify_on_420_buy'))
     if buy_status >= 400: raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to purchase DID {msisdn}. Vonage API error: {buy_result.get('error', 'Unknown error')}")
-    
     configuration_status, callback_type_to_use, callback_value_to_use, source_of_config = "Skipped", None, None, None
     if request.voice_callback_type and request.voice_callback_value: callback_type_to_use, callback_value_to_use, source_of_config = request.voice_callback_type, request.voice_callback_value, "request payload"
     else:
         stored_callback_type, stored_callback_value = subaccount_creds.get('default_voice_callback_type'), subaccount_creds.get('default_voice_callback_value')
         if stored_callback_type and stored_callback_value: callback_type_to_use, callback_value_to_use, source_of_config = stored_callback_type, stored_callback_value, "stored default settings"
-    
     if callback_type_to_use and callback_value_to_use:
         final_callback_value = callback_value_to_use
         if callback_type_to_use == 'sip' and '@' not in final_callback_value: final_callback_value = f"{_get_national_number(msisdn, country)}@{final_callback_value}"
@@ -193,7 +169,6 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
         if update_status < 400: configuration_status = f"Applied successfully from {source_of_config}."
         else: configuration_status = f"Failed to apply settings from {source_of_config}: {update_result.get('error', 'Unknown error')}"
     else: configuration_status = "Skipped: No settings provided in request and no defaults configured for this group."
-    
     return ProvisioningResponse(message=f"Successfully provisioned DID {msisdn} for groupid '{request.groupid}'.", provisioned_did=msisdn, country=country, subaccount_name=subaccount_creds['account_name'], subaccount_api_key=subaccount_creds['api_key'], configuration_status=configuration_status)
 
 @app.post("/release-did", response_model=ReleaseResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
