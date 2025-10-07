@@ -10,7 +10,6 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - .:/app
       - ${LOGS_DIRECTORY}:/app/logs
     env_file:
       - .env
@@ -26,11 +25,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
       - ${LOGS_DIRECTORY}:/app/logs
     env_file:
       - .env
-    command: "uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --reload --reload-exclude /app/logs/ --reload-exclude /app/config/"
+    command: "uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --workers 4"
     restart: unless-stopped
     profiles:
       - api
