@@ -1,0 +1,55 @@
+# --- START OF FILE .github/workflows/docker-publish.yml ---
+
+# This is the name of the workflow that will appear in the "Actions" tab of your GitHub repository.
+name: Build and Push Docker Image
+
+# This section defines when the workflow will run.
+on:
+  # Run this workflow every time a push is made to the 'main' branch.
+  push:
+    branches: [ "main" ]
+
+# This section defines the jobs to be run as part of the workflow.
+jobs:
+  build-and-push:
+    # The type of machine to run the job on. 'ubuntu-latest' is a standard choice.
+    runs-on: ubuntu-latest
+
+    # These are permissions the job needs to read the repo and write to the GitHub Packages (Container Registry).
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Step 1: Check out your repository code so the workflow can access it.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Log in to GitHub Container Registry (GHCR).
+      # The GITHUB_TOKEN is a special, temporary token that GitHub automatically creates for authentication.
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 3: Extract metadata (like tags) for the Docker image.
+      # This action automatically creates useful tags for your image, like 'latest' and the git commit SHA.
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      # Step 4: Build the Docker image from your Dockerfile and push it to GHCR.
+      # It uses the tags generated in the previous step.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+# --- END OF FILE .github/workflows/docker-publish.yml ---
