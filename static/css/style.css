@@ -1,1 +1,521 @@
+/* --- START OF FILE static/css/style.css --- */
+body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; }
+h1 { color: #0055a5; /* Removed margin-bottom: 20px; as it's now in .header-container */ }
+.form-group { margin-bottom: 15px; }
+label { display: block; margin-bottom: 5px; font-weight: bold; }
+input[type="text"], input[type="password"], select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 16px; }
+input:read-only { background-color: #f0f0f0; cursor: not-allowed; } /* Style for readonly inputs */
+select { height: 40px; }
+textarea { height: 120px; font-family: monospace; }
+button { background-color: #0055a5; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 16px; margin-right: 5px; margin-top: 5px; }
+button:hover { background-color: #003d7a; }
+button:disabled { background-color: #ccc; cursor: not-allowed; }
+.preview-button { background-color: #6c757d; } .preview-button:hover { background-color: #5a6268; }
+.copy-button { background-color: #ff9800; } .copy-button:hover { background-color: #e68a00; }
+.purchase-button { background-color: #4CAF50; } .purchase-button:hover { background-color: #45a049; }
+.configure-button { background-color: #2196F3; } .configure-button:hover { background-color: #1e88e5; }
+.export-button { background-color: #9c27b0; } .export-button:hover { background-color: #8e24aa; }
+.stop-button { background-color: #dc3545; } /* NEW: Stop button style */
+.stop-button:hover { background-color: #c82333; } /* NEW: Stop button hover style */
+.info-button { background-color: #17a2b8; padding: 0 9px; font-size: 14px; line-height: 20px; border-radius: 50%; width: 24px; height: 24px; text-align: center; } /* For country code button */
 
+.tabs { display: flex; border-bottom: 1px solid #ddd; margin-bottom: 0; }
+.tab-link { padding: 10px 15px; cursor: pointer; border: 1px solid transparent; border-bottom: none; margin-right: 5px; background-color: #f1f1f1; border-radius: 4px 4px 0 0; }
+.tab-link.active { background-color: #fff; border-color: #ddd; border-bottom: 1px solid #fff; position: relative; top: 1px; font-weight: bold; }
+.tab-content { display: none; padding: 20px; /* Added padding back */ border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px; margin-bottom: 20px; }
+.tab-content.active { display: block; }
+
+.accordion details { border-bottom: 1px solid #eee; }
+.accordion details:last-child { border-bottom: none; }
+.accordion summary { font-size: 1.1em; font-weight: bold; padding: 15px 15px 15px 40px; cursor: pointer; background-color: #f9f9f9; list-style: none; position: relative; transition: background-color 0.2s ease; }
+.accordion summary:hover { background-color: #f1f1f1; }
+.accordion summary::before { content: '►'; position: absolute; left: 15px; top: 50%; transform: translateY(-50%) rotate(0deg); transition: transform 0.2s ease; font-size: 0.8em; color: #555; }
+.accordion details[open] summary::before { transform: translateY(-50%) rotate(90deg); }
+.accordion details[open] summary { background-color: #e9e9e9; }
+.accordion .action-content { padding: 20px; border-top: 1px solid #eee; }
+.accordion h3 { margin-top: 0; color: #003d7a; }
+.accordion h4 { margin-top: 25px; margin-bottom: 10px; color: #004a8f; border-bottom: 1px solid #eee; padding-bottom: 5px;}
+
+#response { margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9; white-space: pre-wrap; display: none; font-family: monospace; font-size: 14px; }
+#response.success { border-color: #4CAF50; background-color: #e8f5e9; }
+#response.error { border-color: #f44336; background-color: #ffebee; }
+#response.pending { border-color: #ffc107; background-color: #fff8e1; }
+
+#search-results-container ul, #purchase-status-container-div ul, #configuration-status-container-div ul, #vonageModifyDidStatusList { list-style-type: none; padding-left: 0; margin-top: 0; } /* Added #vonageModifyDidStatusList */
+#search-results-container li, #purchase-status-container-div li, #configuration-status-container-div li, #vonageModifyDidStatusList li { background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 10px 15px; margin-bottom: 8px; border-radius: 4px; font-size: 0.95em; display: flex; align-items: center; flex-wrap: wrap; } /* Added #vonageModifyDidStatusList li */
+#search-results-container li span, #purchase-status-container-div li span, #configuration-status-container-div li span, #vonageModifyDidStatusList li span { margin-right: 15px; margin-bottom: 5px; } /* Added #vonageModifyDidStatusList li span */
+#search-results-container li strong { font-weight: normal; color: #555; margin-right: 5px;}
+#search-results-container .did-checkbox { margin-right: 15px; transform: scale(1.2); }
+#purchase-status-container-div .status-success, #configuration-status-container-div .status-success, #vonageModifyDidStatusList .status-success { color: green; font-weight: bold; } /* Added #vonageModifyDidStatusList .status-success */
+#purchase-status-container-div .status-error, #configuration-status-container-div .status-error, #vonageModifyDidStatusList .status-error { color: red; font-weight: bold; } /* Added #vonageModifyDidStatusList .status-error */
+#purchase-status-container-div .status-pending, #configuration-status-container-div .status-pending, #vonageModifyDidStatusList .status-pending { color: #dda300; font-weight: bold; } /* Added .status-pending styling */
+#purchase-status-area h3, #configuration-status-area h3, #vonageModifyDidStatusArea h4 { margin-top: 15px; } /* Adjusted for Modify DID area */
+
+.toggle-container { display: flex; align-items: center; }
+.toggle { position: relative; display: inline-block; width: 50px; height: 24px; margin-right: 10px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 24px; }
+.slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: #0055a5; }
+input:checked + .slider:before { transform: translateX(26px); }
+
+.stored-item-row { display: flex; align-items: center; margin-bottom: 5px; padding: 5px; background-color: #f5f5f5; border-radius: 4px; }
+.stored-item-row:nth-child(even) { background-color: #ffffff; }
+.stored-item-label { flex: 2; font-weight: bold; }
+.stored-item-value { flex: 2; font-family: monospace; word-break: break-all; }
+.stored-item-delete-btn { background-color: #f44336; color: white; border: none; border-radius: 4px; padding: 3px 8px; cursor: pointer; margin-left: 10px; font-weight: bold; }
+
+/* --- Inner Tab Styles --- */
+.inner-tabs {
+    display: flex;
+    border-bottom: 1px solid #ccc;
+    margin-bottom: 0;
+    background-color: #f0f0f0;
+    border-radius: 0;
+    box-sizing: border-box;
+}
+.inner-tab-link {
+    padding: 10px 20px;
+    cursor: pointer;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background-color: transparent;
+    color: #333;
+    font-weight: normal;
+    margin-right: 2px;
+    transition: background-color 0.2s ease, border-bottom-color 0.2s ease;
+}
+.inner-tab-link:hover {
+    background-color: #e9e9e9;
+    color: #000;
+}
+.inner-tab-link.active {
+    border-bottom: 3px solid #0055a5;
+    font-weight: bold;
+    color: #0055a5;
+}
+.inner-tab-content {
+    display: none;
+    padding: 20px;
+}
+.inner-tab-content.active {
+    display: block;
+}
+.accordion .action-content.has-inner-tabs {
+    padding: 0;
+    border-top: 1px solid #eee;
+}
+.action-content.has-inner-tabs > div[style*="padding: 0 20px"] {
+    padding-top: 20px;
+}
+/* REMOVED unused selectors */
+
+/* --- Settings Modal Styles --- */
+.header-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px; /* Added margin back here */
+}
+.settings-icon {
+    font-size: 24px; /* Unicode Gear: ⚙ or use an icon font/SVG */
+    cursor: pointer;
+    padding: 5px;
+    color: #555;
+    transition: color 0.2s ease;
+}
+.settings-icon:hover {
+    color: #0055a5;
+}
+.settings-modal {
+    display: none; /* Hidden by default */
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5); /* Slightly darker overlay */
+}
+.settings-modal-content {
+    background-color: #fefefe;
+    margin: 10% auto; /* Adjusted margin for better centering */
+    padding: 25px;
+    border: 1px solid #bbb;
+    width: 90%;
+    max-width: 550px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.settings-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+}
+.settings-modal-header h2 {
+    margin: 0;
+    font-size: 1.5em;
+    color: #0055a5;
+}
+.settings-modal-close {
+    color: #888;
+    font-size: 32px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 1;
+}
+.settings-modal-close:hover,
+.settings-modal-close:focus {
+    color: #333;
+    text-decoration: none;
+}
+.settings-modal-body p {
+    margin-bottom: 20px;
+    font-size: 0.95em;
+    color: #555;
+}
+.settings-form-group {
+    margin-bottom: 20px;
+}
+.settings-form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #333;
+}
+.settings-form-group input[type="number"] {
+    width: 100%;
+    padding: 10px;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1em;
+}
+.settings-form-group small {
+    display: block;
+    margin-top: 5px;
+    font-size: 0.85em;
+    color: #777;
+}
+.settings-modal-footer {
+    text-align: right;
+    margin-top: 25px;
+    padding-top: 15px;
+    border-top: 1px solid #e0e0e0;
+}
+.settings-modal-footer button {
+    padding: 12px 18px;
+    margin-left: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1em;
+    font-weight: bold;
+}
+.settings-modal-footer button.save-settings-btn {
+    background-color: #4CAF50;
+    color: white;
+}
+.settings-modal-footer button.save-settings-btn:hover {
+    background-color: #45a049;
+}
+.settings-modal-footer button.cancel-settings-btn {
+    background-color: #f44336; /* A common color for cancel/close */
+    color: white;
+}
+.settings-modal-footer button.cancel-settings-btn:hover {
+    background-color: #da190b;
+}
+
+/* General status message styling */
+.status-message {
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+/* Ensure individual list item status spans use the same pending color */
+#purchase-status-container-div li .status-pending,
+#configuration-status-container-div li .status-pending,
+#vonageModifyDidStatusList li .status-pending {
+    color: #dda300; /* Same as #response.pending border, but for text */
+}
+
+/* --- NEW STYLES for Settings Modal --- */
+hr.settings-divider {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 25px 0;
+}
+.setting-item-subgroup {
+    display: flex;
+    align-items: center;
+    margin-left: 10px;
+    margin-bottom: 8px;
+}
+.setting-item-subgroup input[type="checkbox"] {
+    margin-right: 10px;
+    transform: scale(1.1);
+}
+.setting-item-subgroup label {
+    margin-bottom: 0;
+    font-weight: normal;
+    cursor: pointer;
+}
+.action-button {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: background-color 0.2s ease;
+}
+.action-button:hover {
+    background-color: #5a6268;
+}
+.action-button.danger-button {
+    background-color: #dc3545;
+}
+.action-button.danger-button:hover {
+    background-color: #c82333;
+}
+
+/* --- START: NEW STYLES FOR SUBACCOUNT MANAGEMENT --- */
+.subaccount-item {
+    background-color: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+    margin-bottom: 10px;
+}
+.subaccount-item details {
+    border: none;
+}
+.subaccount-item summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background-color: #f9f9f9;
+    padding-left: 40px; /* Keep space for the arrow */
+}
+.subaccount-item .subaccount-name-display {
+    flex-grow: 1;
+}
+.subaccount-item .subaccount-key-display {
+    font-family: monospace;
+    font-size: 0.9em;
+    color: #555;
+}
+.subaccount-status-tag {
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: bold;
+    color: white;
+    margin-left: auto;
+}
+.subaccount-status-tag.primary { background-color: #9c27b0; }
+.subaccount-status-tag.active { background-color: #4CAF50; }
+.subaccount-status-tag.suspended { background-color: #f44336; }
+
+.subaccount-content {
+    padding: 20px;
+    border-top: 1px solid #e0e0e0;
+}
+.form-group-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+}
+.subaccount-content .form-group {
+    margin-bottom: 0; /* Remove default margin as grid gap handles spacing */
+}
+.subaccount-content hr {
+    margin: 20px 0;
+}
+/* --- END: NEW STYLES FOR SUBACCOUNT MANAGEMENT --- */
+
+
+/* --- START: REVISED STYLES FOR MODIFY DID FORM --- */
+#vonageModifyDidForm #vonageModify_csv_section {
+    padding: 20px;
+    border: 1px solid #e0e0e0;
+    border-radius: 5px;
+    background-color: #f8f9fa;
+    margin-top: 15px;
+}
+#vonageModifyDidForm .csv-instruction-block {
+    font-size: 0.9em;
+    color: #444;
+}
+#vonageModifyDidForm .csv-instruction-block b {
+    display: block;
+    margin-top: 15px;
+    margin-bottom: 5px;
+}
+#vonageModifyDidForm .csv-instruction-block ul {
+    margin-top: 5px;
+    padding-left: 20px;
+}
+#vonageModifyDidForm .csv-instruction-block li {
+    margin-bottom: 5px;
+}
+#vonageModifyDidForm .csv-header-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+#vonageModifyDidForm .csv-header-tag {
+    background-color: #e9ecef;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.95em;
+    border: 1px solid #ced4da;
+}
+#vonageModifyDidForm code {
+    display: block;
+    background-color: #fff;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 8px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #333;
+    border: 1px solid #ddd;
+    font-size: 0.95em;
+}
+#vonageModifyDidForm input[type="file"] {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 5px;
+    background-color: #fff;
+}
+#vonageModifyDidForm input[type="file"]::file-selector-button {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    margin-right: 15px;
+    transition: background-color 0.2s ease;
+}
+#vonageModifyDidForm input[type="file"]::file-selector-button:hover {
+    background-color: #5a6268;
+}
+#vonageModifyDidForm #vonageModify_manual_section {
+    margin-top: 15px;
+}
+/* --- END: REVISED STYLES FOR MODIFY DID FORM --- */
+
+/* --- START: NEW STYLES FOR CUSTOM CREDENTIAL DROPDOWN --- */
+.custom-select-wrapper {
+    position: relative;
+    user-select: none;
+    width: 100%;
+}
+.custom-select-trigger {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px;
+    font-size: 16px;
+    font-weight: 400;
+    color: #333;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    height: 40px; /* Match standard input height */
+    box-sizing: border-box;
+}
+.custom-select-trigger span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-right: 10px;
+}
+.arrow {
+    position: relative;
+    height: 10px;
+    width: 10px;
+}
+.arrow::before, .arrow::after {
+    content: '';
+    position: absolute;
+    bottom: 0px;
+    width: 0.15rem;
+    height: 100%;
+    transition: all 0.2s ease;
+}
+.arrow::before {
+    left: -3px;
+    transform: rotate(45deg);
+    background-color: #555;
+}
+.arrow::after {
+    left: 2px;
+    transform: rotate(-45deg);
+    background-color: #555;
+}
+.custom-select-wrapper.open .arrow::before { transform: rotate(-45deg); }
+.custom-select-wrapper.open .arrow::after { transform: rotate(45deg); }
+
+.custom-options {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    z-index: 10;
+    max-height: 250px;
+    overflow-y: auto;
+    display: none; /* Hidden by default */
+}
+.custom-select-wrapper.open .custom-options {
+    display: block;
+}
+.custom-option {
+    padding: 10px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+.custom-option:hover {
+    background-color: #f1f1f1;
+}
+.custom-option.selected {
+    background-color: #0055a5;
+    color: white;
+}
+.custom-option.filter-option {
+    position: sticky;
+    top: 0;
+    background-color: #f8f9fa;
+    padding: 5px;
+    border-bottom: 1px solid #e0e0e0;
+}
+.custom-option .credential-filter-input {
+    width: 100%;
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+/* --- END: NEW STYLES FOR CUSTOM CREDENTIAL DROPDOWN --- */
+
+
+/* --- END OF FILE static/css/style.css --- */
