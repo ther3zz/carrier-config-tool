@@ -5,7 +5,9 @@ version: '3.8'
 services:
   # --- Flask Web Application (UI) ---
   flask_app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: flask_ui_app
     ports:
       - "5000:5000"
@@ -20,7 +22,9 @@ services:
 
   # --- FastAPI Provisioning Service ---
   fastapi_app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: fastapi_provisioning_api
     ports:
       - "8000:8000"
