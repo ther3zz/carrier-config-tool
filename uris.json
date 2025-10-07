@@ -1,0 +1,5 @@
+[
+    { "uri": "sip:example1@sbc.domain.com", "label": "Primary SBC" },
+    { "uri": "sip:example2@sbc.domain.com", "label": "Secondary SBC" },
+    { "uri": "sip:testing@dev.domain.com", "label": "Dev Environment" }
+]
