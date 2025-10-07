@@ -2,9 +2,9 @@
 
 import os
 from dotenv import load_dotenv
-# --- START: MODIFICATION ---
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
-from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
+# --- START: MODIFICATION ---
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware # Correct import path
 # --- END: MODIFICATION ---
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
@@ -26,12 +26,11 @@ app = FastAPI(
     version="1.3.0"
 )
 
-# --- START: MODIFICATION (Add Middleware) ---
+# --- Add Middleware ---
 # Read the trusted proxy IPs from the environment.
 TRUSTED_PROXY_IPS = os.environ.get("TRUSTED_PROXY_IPS")
 if TRUSTED_PROXY_IPS:
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=TRUSTED_PROXY_IPS)
-# --- END: MODIFICATION ---
 
 
 # --- Configuration Loading ---
@@ -115,7 +114,7 @@ async def startup_event():
     if credentials_manager.STORAGE_MODE == 'db' and not VONAGE_PRIMARY_ACCOUNT_NAME:
         print("WARNING: `VONAGE_PRIMARY_ACCOUNT_NAME` is not set. The auto-create subaccount feature will be disabled.")
 
-# --- The rest of the file is unchanged. The middleware handles the logic automatically. ---
+# --- The rest of the file is unchanged. ---
 @app.post("/provision-did", response_model=ProvisioningResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Request):
     # (Function unchanged)
