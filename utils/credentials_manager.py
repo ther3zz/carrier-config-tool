@@ -3,7 +3,7 @@
 import os
 import json
 from threading import Lock
-import logging # Import the logging module
+import logging
 
 # Import the encryption functions from our new utility
 from .encryption import encrypt_data, decrypt_data
@@ -129,55 +129,90 @@ def get_decrypted_credentials(name: str, master_key: str) -> dict:
 
 
 def find_and_decrypt_credential_by_groupid(groupid: str, master_key: str) -> dict:
-    """
-    Finds a credential by groupid from the database, decrypts it, and includes default settings.
-    """
-    # Get the system logger configured in logger.py
+    # (Function unchanged, including debug logs)
     log = logging.getLogger("system")
-
     if STORAGE_MODE != 'db':
         log.error("find_and_decrypt_credential_by_groupid called while not in 'db' mode.")
         raise ValueError("This function is only available in 'db' credential storage mode.")
     if not master_key:
         log.error("find_and_decrypt_credential_by_groupid called without a master key.")
         raise ValueError("A master key is required to decrypt credentials.")
-
-    # --- START: MODIFICATION (Add Debugging Logs) ---
     log.info(f"Attempting to find credential in DB for groupid: '{groupid}'")
     credential_data = db_manager.db_find_credential_by_groupid_in_name(groupid)
-
     if not credential_data:
         log.warning(f"DB search returned NO results for groupid: '{groupid}'")
         raise ValueError(f"No credential found for groupid '{groupid}'.")
-    
     log.info(f"DB search SUCCESS for groupid '{groupid}'. Found account: '{credential_data.get('name')}'")
-
     encrypted_secret = credential_data.get('encrypted_secret')
     if not encrypted_secret:
         log.error(f"Credential '{credential_data.get('name')}' is missing its encrypted_secret.")
         raise ValueError(f"Credential for groupid '{groupid}' is improperly configured.")
-    
-    # Log a snippet of the encrypted secret to verify it's not empty
     log.info(f"Found encrypted secret snippet: ...{encrypted_secret[-10:]}")
     log.info("Attempting to decrypt secret...")
-
     try:
         decrypted_secret = decrypt_data(encrypted_secret, master_key)
         log.info("Decryption SUCCESSFUL.")
     except ValueError as e:
-        # This is the most likely point of failure if the master key is wrong.
         log.error(f"DECRYPTION FAILED for account '{credential_data.get('name')}'. This almost always means the MASTER_KEY is incorrect. Error: {e}")
-        # Re-raise the error to send the 404 response
         raise ValueError(f"Decryption failed for groupid '{groupid}'. The master key may be incorrect.")
-    
-    # --- END: MODIFICATION ---
+    return { 'api_key': credential_data.get('api_key'), 'api_secret': decrypted_secret, 'account_name': credential_data.get('name'), 'default_voice_callback_type': credential_data.get('default_voice_callback_type'), 'default_voice_callback_value': credential_data.get('default_voice_callback_value') }
 
-    return {
-        'api_key': credential_data.get('api_key'),
-        'api_secret': decrypted_secret,
-        'account_name': credential_data.get('name'),
-        'default_voice_callback_type': credential_data.get('default_voice_callback_type'),
-        'default_voice_callback_value': credential_data.get('default_voice_callback_value')
-    }
+# --- START: MODIFICATION (Add Re-Keying Logic) ---
+def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
+    """
+    Iterates through all credentials, decrypts them with the old key,
+    and re-encrypts them with the new key.
+    """
+    all_creds = get_all_credentials()
+    results = {"success": [], "failed": []}
+    updated_creds = {}
+
+    if not all_creds:
+        return results
+
+    for name, data in all_creds.items():
+        try:
+            # Step 1: Decrypt with the old key
+            encrypted_secret = data.get('encrypted_secret')
+            if not encrypted_secret:
+                raise ValueError("Missing encrypted_secret field.")
+            
+            decrypted_secret = decrypt_data(encrypted_secret, old_master_key)
+
+            # Step 2: Re-encrypt with the new key
+            new_encrypted_secret = encrypt_data(decrypted_secret, new_master_key)
+            
+            # Prepare the updated entry
+            updated_data = data.copy()
+            updated_data['encrypted_secret'] = new_encrypted_secret
+            updated_creds[name] = updated_data
+            
+            results['success'].append(name)
+        except Exception as e:
+            results['failed'].append({"name": name, "reason": str(e)})
+
+    # Step 3: If there were failures, do NOT save anything to prevent data corruption.
+    if results['failed']:
+        # The calling function in app.py will see the 'failed' list and return an error.
+        return results
+
+    # Step 4: If all were successful, atomically save the updated credentials.
+    if STORAGE_MODE == 'db':
+        # For DB, we iterate and save each one individually.
+        for name, data in updated_creds.items():
+             db_manager.db_save_credential(
+                name, 
+                data['api_key'], 
+                data['encrypted_secret'], 
+                data['api_key_hint'],
+                data.get('default_voice_callback_type', ''),
+                data.get('default_voice_callback_value', '')
+            )
+    else:
+        # For file, we overwrite the entire file with the re-encrypted data.
+        _file_save_all_credentials(updated_creds)
+        
+    return results
+# --- END: MODIFICATION ---
 
 # --- END OF FILE utils/credentials_manager.py ---
