@@ -4,6 +4,9 @@ from flask import Blueprint, request, jsonify
 from utils import credentials_manager
 from utils import settings_manager
 from utils.password_generator import generate_secure_secret
+# --- START: MODIFICATION ---
+from utils import notification_service
+# --- END: MODIFICATION ---
 from . import client as vonage_client
 
 # Create a Blueprint for all Vonage-related API routes that the UI will call
@@ -18,14 +21,17 @@ def _get_credentials_from_request(data: dict):
         account_name = data.get('account_name')
         if not master_key or not account_name:
             raise ValueError("Master Key and Account Name are required.")
-        return credentials_manager.get_decrypted_credentials(account_name, master_key)
+        creds = credentials_manager.get_decrypted_credentials(account_name, master_key)
+        # Add account_name to the returned dict for later use
+        creds['account_name'] = account_name
+        return creds
     else:
         # Assumes manual entry if account_name is not provided or is 'manual'
         username = data.get('username')
         password = data.get('password')
         if not username or not password:
             raise ValueError("Manual entry requires both API Key and API Secret.")
-        return {'api_key': username, 'api_secret': password}
+        return {'api_key': username, 'api_secret': password, 'account_name': 'Manual Entry'}
 
 
 # --- Subaccount Management Endpoints ---
@@ -96,6 +102,17 @@ def create_subaccount():
                         master_key=master_key
                     )
                     result['message'] = f"Successfully created subaccount '{new_sub_name}' and saved its credentials locally."
+
+                    # --- START: MODIFICATION (Fire Notification) ---
+                    notification_payload = {
+                        "primary_account": account_name,
+                        "subaccount_name": new_sub_name,
+                        "subaccount_api_key": new_sub_api_key,
+                        "use_primary_balance": payload['use_primary_account_balance']
+                    }
+                    notification_service.fire_and_forget("subaccount.created", notification_payload)
+                    # --- END: MODIFICATION ---
+
                 except Exception as e:
                     result['message'] = (f"WARNING: Successfully created subaccount '{new_sub_name}' via Vonage API, "
                                        f"but FAILED to save its credentials locally. Please add them manually. Error: {str(e)}")
@@ -144,7 +161,7 @@ def update_subaccount():
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
 
-# --- START: MODIFICATION (Add PSIP Trunking Endpoints) ---
+# --- PSIP Trunking Endpoints ---
 @vonage_bp.route('/psip/create', methods=['POST'])
 def create_psip_domain():
     data = request.get_json()
@@ -152,7 +169,6 @@ def create_psip_domain():
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
 
-        # Extract only the PSIP-specific payload keys
         payload = {
             'name': data.get('name'),
             'trunk_name': data.get('trunk_name'),
@@ -169,7 +185,6 @@ def create_psip_domain():
             payload=payload,
             log_enabled=log_enabled
         )
-        # Add a clear message for the UI
         if status_code < 400:
             result['message'] = f"Successfully sent PSIP domain creation request for '{payload.get('name')}'."
             result['status_code'] = status_code
@@ -197,7 +212,6 @@ def get_psip_domains():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
-# --- END: MODIFICATION ---
 
 
 # --- DID Management Endpoints ---
@@ -209,7 +223,6 @@ def search_dids():
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
-        # Extract only the search-specific params
         params = {
             "country": data.get('country'),
             "type": data.get('type'),
@@ -247,6 +260,8 @@ def buy_did():
             treat_420_as_success=settings_manager.get_setting('treat_420_as_success_buy'),
             verify_on_420=settings_manager.get_setting('verify_on_420_buy')
         )
+        # NOTE: Provisioning notification is handled by fastapi_app.py or in a future UI-based task.
+        # This endpoint is generally part of a larger workflow.
         return jsonify(result), status_code
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -289,6 +304,17 @@ def release_did():
             msisdn=data.get('msisdn'),
             log_enabled=log_enabled
         )
+
+        # --- START: MODIFICATION (Fire Notification) ---
+        if status_code < 400:
+            notification_payload = {
+                "account_name": creds.get('account_name'),
+                "did": data.get('msisdn'),
+                "country": data.get('country')
+            }
+            notification_service.fire_and_forget("did.released", notification_payload)
+        # --- END: MODIFICATION ---
+
         return jsonify(result), status_code
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
