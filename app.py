@@ -135,7 +135,7 @@ def delete_credential():
             return jsonify({"error": f"Credential '{name}' not found."}), 404
     except Exception as e: return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
 
-# --- START: MODIFICATION (Add Re-keying Endpoint) ---
+# --- START: MODIFICATION (Revert rekey endpoint to simple JSON handler) ---
 @app.route('/api/credentials/rekey', methods=['POST'])
 def rekey_credentials():
     """
@@ -156,10 +156,10 @@ def rekey_credentials():
         return jsonify({"error": "New master key cannot be the same as the old master key."}), 400
 
     try:
+        # Call the simplified function without the salt argument
         results = credentials_manager.rekey_all_credentials(old_key, new_key)
         
         if results.get('failed'):
-            # The manager aborts the save if any credential fails, so this is an operational failure.
             return jsonify({
                 "error": "Re-keying failed for one or more credentials. No changes were saved.",
                 "details": results['failed']
@@ -171,7 +171,6 @@ def rekey_credentials():
         }), 200
 
     except Exception as e:
-        # This catches broader issues, like if the entire credential store can't be read.
         return jsonify({"error": f"An unexpected server error occurred during re-keying: {str(e)}"}), 500
 # --- END: MODIFICATION ---
 
@@ -210,11 +209,8 @@ def import_credentials_from_file():
                 results['failed'].append({"name": name, "reason": "Missing api_key or encrypted_secret."})
                 continue
             
-            # Decrypt the secret using the provided master key
             decrypted_secret = encryption.decrypt_data(encrypted_secret, master_key)
             
-            # Re-save the credential. The save_credential function will handle re-encryption
-            # with the server's current salt and save it to the configured storage (DB).
             credentials_manager.save_credential(
                 name=name,
                 api_key=api_key,
@@ -225,7 +221,6 @@ def import_credentials_from_file():
             )
             results['success'].append(name)
         except ValueError as e:
-            # This will catch decryption errors (wrong master key) or saving errors
             results['failed'].append({"name": name, "reason": str(e)})
         except Exception as e:
             results['failed'].append({"name": name, "reason": f"An unexpected error occurred: {str(e)}"})
@@ -275,7 +270,6 @@ if __name__ == '__main__':
     open('utils/__init__.py', 'a').close()
     open('vendors/__init__.py', 'a').close()
     open('vendors/vonage/__init__.py', 'a').close()
-    encryption.get_or_create_salt()
     app.run(host='0.0.0.0', port=5000, debug=True)
 
 # --- END OF FILE app.py ---
