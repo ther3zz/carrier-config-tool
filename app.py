@@ -14,6 +14,9 @@ from utils import credentials_manager
 from utils import encryption
 from utils import settings_manager
 from vendors.vonage.routes import vonage_bp
+# --- START: MODIFICATION ---
+from routes.notifications import notifications_bp
+# --- END: MODIFICATION ---
 
 app = Flask(__name__)
 
@@ -24,6 +27,10 @@ NPA_DATA_CONFIG_FILE = os.path.join('config', 'npa_data.json')
 
 # Register Blueprints
 app.register_blueprint(vonage_bp)
+# --- START: MODIFICATION ---
+app.register_blueprint(notifications_bp)
+# --- END: MODIFICATION ---
+
 
 # --- Base Routes ---
 @app.route('/')
@@ -135,7 +142,6 @@ def delete_credential():
             return jsonify({"error": f"Credential '{name}' not found."}), 404
     except Exception as e: return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
 
-# --- START: MODIFICATION (Revert rekey endpoint to simple JSON handler) ---
 @app.route('/api/credentials/rekey', methods=['POST'])
 def rekey_credentials():
     """
@@ -156,7 +162,6 @@ def rekey_credentials():
         return jsonify({"error": "New master key cannot be the same as the old master key."}), 400
 
     try:
-        # Call the simplified function without the salt argument
         results = credentials_manager.rekey_all_credentials(old_key, new_key)
         
         if results.get('failed'):
@@ -172,7 +177,6 @@ def rekey_credentials():
 
     except Exception as e:
         return jsonify({"error": f"An unexpected server error occurred during re-keying: {str(e)}"}), 500
-# --- END: MODIFICATION ---
 
 @app.route('/api/credentials/import', methods=['POST'])
 def import_credentials_from_file():
@@ -266,8 +270,14 @@ if __name__ == '__main__':
     os.makedirs('config', exist_ok=True)
     os.makedirs('logs', exist_ok=True)
     os.makedirs('utils', exist_ok=True)
+    # --- START: MODIFICATION ---
+    os.makedirs('routes', exist_ok=True)
+    # --- END: MODIFICATION ---
     os.makedirs('vendors/vonage', exist_ok=True)
     open('utils/__init__.py', 'a').close()
+    # --- START: MODIFICATION ---
+    open('routes/__init__.py', 'a').close()
+    # --- END: MODIFICATION ---
     open('vendors/__init__.py', 'a').close()
     open('vendors/vonage/__init__.py', 'a').close()
     app.run(host='0.0.0.0', port=5000, debug=True)
