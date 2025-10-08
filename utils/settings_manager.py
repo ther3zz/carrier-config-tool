@@ -1,72 +1,85 @@
 # --- START OF FILE utils/settings_manager.py ---
 
+import os
+from threading import Lock
 from . import db_manager
 
-# Define the hardcoded default values for all application settings.
-# This ensures the application can always run, even with an empty database.
+# --- START: MODIFICATION (Add Notification Settings) ---
 DEFAULT_SETTINGS = {
-    'max_concurrent_requests': 5,
-    'delay_between_batches_ms': 1000,
-    'store_logs_enabled': False,
-    'treat_420_as_success_buy': False,
-    'verify_on_420_buy': False,
-    'treat_420_as_success_configure': False
+    'max_concurrent_requests': '5',
+    'delay_between_batches_ms': '1000',
+    'store_logs_enabled': 'False',
+    'treat_420_as_success_buy': 'False',
+    'verify_on_420_buy': 'False',
+    'treat_420_as_success_configure': 'False',
+    'notifications_enabled': 'False',
+    'notifications_webhook_url': '',
+    'notifications_secret': ''
 }
+# --- END: MODIFICATION ---
 
-# A simple in-memory cache to avoid hitting the database on every request.
-_settings_cache = None
+# A simple in-memory cache for settings to reduce DB calls.
+settings_cache = {}
+cache_lock = Lock()
+STORAGE_MODE = os.environ.get('CREDENTIAL_STORAGE_MODE', 'file').lower()
 
-def get_all_settings() -> dict:
+def get_all_settings():
     """
-    Fetches all settings from the database and merges them with the defaults.
-    The database values override the defaults. Caches the result.
+    Loads all settings from the database, falling back to defaults
+    for any that are missing. This populates the cache.
     """
-    global _settings_cache
-    if _settings_cache is not None:
-        return _settings_cache
+    with cache_lock:
+        global settings_cache
+        if STORAGE_MODE == 'db':
+            db_settings = db_manager.db_get_all_settings()
+            # Merge DB settings with defaults, so new defaults are always available
+            settings_cache = {**DEFAULT_SETTINGS, **db_settings}
+        else:
+            # In file mode, we just use the defaults as there's no UI to change them.
+            settings_cache = DEFAULT_SETTINGS.copy()
+        return settings_cache
 
-    # Start with a copy of the defaults.
-    settings = DEFAULT_SETTINGS.copy()
-    
-    # Fetch settings from the database.
-    db_settings = db_manager.db_get_all_settings()
-
-    # Update the defaults with any values found in the database.
-    # This also handles type conversion from the string values stored in the DB.
-    for key, value in db_settings.items():
-        if key in settings:
-            default_type = type(DEFAULT_SETTINGS.get(key))
-            try:
-                if default_type == bool:
-                    settings[key] = value.lower() in ['true', '1', 't']
-                else:
-                    settings[key] = default_type(value)
-            except (ValueError, TypeError):
-                # If conversion fails, stick with the default value.
-                print(f"Warning: Could not convert setting '{key}' with value '{value}' to {default_type}. Using default.")
-    
-    _settings_cache = settings
-    return _settings_cache
+def get_setting(key, default=None):
+    """
+    Retrieves a single setting value by key, using the cache.
+    Populates the cache on first run.
+    """
+    with cache_lock:
+        if not settings_cache:
+            get_all_settings() # Prime the cache
+        
+        value_str = settings_cache.get(key)
+        
+        # Handle boolean conversion for 'True'/'False' strings
+        if isinstance(value_str, str):
+            if value_str.lower() == 'true':
+                return True
+            if value_str.lower() == 'false':
+                return False
+        
+        # Return the value, or the provided default if it's None in the cache
+        return value_str if value_str is not None else default
 
 def save_settings(new_settings: dict):
     """
-    Saves a dictionary of settings to the database.
+    Saves a dictionary of settings to the database and updates the cache.
     """
-    global _settings_cache
-    for key, value in new_settings.items():
-        # Ensure the setting is one we know about to prevent saving arbitrary data.
-        if key in DEFAULT_SETTINGS:
-            # Convert all values to string for database storage.
-            db_manager.db_save_setting(key, str(value))
-    
-    # Invalidate the cache. The next call to get_all_settings will reload from the DB.
-    _settings_cache = None
-    print("Settings saved successfully. Cache invalidated.")
+    if STORAGE_MODE != 'db':
+        # In file mode, saving is a no-op as it's not supported.
+        return
 
-def get_setting(key: str):
-    """
-    Convenience function to get a single setting's value.
-    """
-    return get_all_settings().get(key)
+    with cache_lock:
+        global settings_cache
+        for key, value in new_settings.items():
+            # Ensure we only try to save keys that are defined in our defaults
+            if key in DEFAULT_SETTINGS:
+                # Convert booleans to strings for consistent DB storage
+                str_value = str(value)
+                db_manager.db_save_setting(key, str_value)
+                settings_cache[key] = str_value # Update cache
+            else:
+                print(f"Warning: Attempted to save unknown setting '{key}'. Ignoring.")
 
+# Initialize the cache on startup
+get_all_settings()
 # --- END OF FILE utils/settings_manager.py ---
