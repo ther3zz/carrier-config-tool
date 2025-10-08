@@ -261,7 +261,119 @@ async function handleBulkNpaPurchaseClick() { /* Stub for bulk purchase */ }
 async function handleConfigureClick() { /* Stub for configuration */ }
 async function handleExportClick() { /* Stub for export */ }
 async function handleVonageModifyDidSubmit(event) { event.preventDefault(); /* Stub for modify */ }
-async function handleVonageReleaseDidSubmit(event) { event.preventDefault(); /* Stub for release */ }
+
+// --- START: MODIFICATION ---
+async function handleVonageReleaseDidSubmit(event) {
+    event.preventDefault();
+
+    if (!confirm("WARNING: You are about to permanently release the specified DIDs from your account. This action cannot be undone. Are you sure you want to proceed?")) {
+        displayResponse("Release operation cancelled by user.", "pending");
+        return;
+    }
+
+    const msisdnsTextarea = document.getElementById('vonageRelease_msisdns');
+    const statusArea = document.getElementById('vonageReleaseDidStatusArea');
+    const statusList = document.getElementById('vonageReleaseDidStatusList');
+
+    const msisdns = msisdnsTextarea.value.split('\n').map(line => line.trim()).filter(line => line !== '');
+
+    if (msisdns.length === 0) {
+        displayResponse("Error: Please enter at least one DID to release.", 'error');
+        return;
+    }
+
+    statusList.innerHTML = '';
+    statusArea.style.display = 'block';
+    displayResponse(`Starting release process for ${msisdns.length} DID(s)...`, 'pending');
+    toggleOperationControls('release', true);
+
+    const isManualCountryMode = document.getElementById('vonageRelease_country_mode_toggle').checked;
+    const manualCountryCode = document.getElementById('vonageRelease_country_other_input').value.toUpperCase();
+
+    const itemsToProcess = [];
+    for (const msisdn of msisdns) {
+        addOrUpdateOperationStatus(msisdn, 'Pending...', 'pending', statusList);
+        let country = '';
+        if (isManualCountryMode) {
+            if (manualCountryCode && /^[A-Z]{2}$/.test(manualCountryCode)) {
+                country = manualCountryCode;
+            } else {
+                addOrUpdateOperationStatus(msisdn, 'Failed: Invalid or missing manual Country Code.', 'error', statusList);
+                continue; // Skip this DID
+            }
+        } else {
+            // Auto-detect US/CA
+            const cleanMsisdn = msisdn.replace(/\D/g, '');
+            const nationalNumber = cleanMsisdn.slice(-10);
+            if (nationalNumber.length === 10) {
+                const npa = nationalNumber.substring(0, 3);
+                if (npaData.US && npaData.US.includes(npa)) {
+                    country = 'US';
+                } else if (npaData.CA && npaData.CA.includes(npa)) {
+                    country = 'CA';
+                }
+            }
+            if (!country) {
+                addOrUpdateOperationStatus(msisdn, 'Failed: Could not auto-detect country. Use manual mode for non-US/CA DIDs.', 'error', statusList);
+                continue; // Skip this DID
+            }
+        }
+        itemsToProcess.push({ msisdn, country });
+    }
+
+    if (itemsToProcess.length === 0) {
+        displayResponse('Release operation finished. No valid DIDs were processed.', 'error');
+        toggleOperationControls('release', false);
+        return;
+    }
+    
+    // Define the function that processes a single item
+    const processSingleDidRelease = async (item) => {
+        try {
+            const authPayload = getAuthPayload('vonageRelease');
+            const apiPayload = {
+                ...authPayload,
+                msisdn: item.msisdn,
+                country: item.country
+            };
+            const response = await apiFetch('/api/vonage/dids/release', {
+                method: 'POST',
+                body: JSON.stringify(apiPayload)
+            });
+            const data = await response.json();
+            return {
+                ...data,
+                status_code: response.status,
+                country: item.country 
+            };
+        } catch (error) {
+            return {
+                error: error.message,
+                status_code: 500
+            };
+        }
+    };
+
+    const results = await processInBatches(
+        itemsToProcess,
+        processSingleDidRelease,
+        addOrUpdateOperationStatus,
+        statusList,
+        item => item.msisdn
+    );
+
+    const successCount = results.filter(r => r.status === 'fulfilled' && r.value.status_code >= 200 && r.value.status_code < 300).length;
+    const failedCount = results.length - successCount;
+    
+    let finalMessage = `Release process finished. Success: ${successCount}, Failed: ${failedCount}.`;
+    if(isOperationCancelled) {
+        finalMessage = `Release process stopped by user. Processed: ${results.length}, Success: ${successCount}, Failed: ${failedCount}.`;
+    }
+
+    displayResponse(finalMessage, failedCount > 0 ? 'error' : 'success');
+    toggleOperationControls('release', false);
+}
+// --- END: MODIFICATION ---
 
 // --- UI & DOM Functions ---
 function populateCredentialSelector(container) { const triggerText = container.querySelector('.custom-select-trigger span'); const optionsContainer = container.querySelector('.custom-options'); const filterInput = container.querySelector('.credential-filter-input'); const valueInput = container.querySelector('.credential-selector-value'); if (!triggerText || !optionsContainer || !filterInput || !valueInput) return; optionsContainer.querySelectorAll('.custom-option:not(.filter-option)').forEach(opt => opt.remove()); filterInput.value = ''; const createOption = (text, value) => { const option = document.createElement('div'); option.classList.add('custom-option'); option.dataset.value = value; option.textContent = text; return option; }; let defaultText, defaultValue; if (!masterKey || storedCredentials.length === 0) { defaultText = masterKey ? '-- No Credentials Found --' : '-- Set Master Key First --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); } else { defaultText = '-- Select a Credential --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); storedCredentials.forEach(c => { optionsContainer.appendChild(createOption(`${c.name} (${c.api_key_hint})`, c.name)); }); } const manualOpt = createOption('== Manual Entry ==', 'manual'); manualOpt.style.fontWeight = 'bold'; optionsContainer.appendChild(manualOpt); triggerText.textContent = defaultText; valueInput.value = defaultValue; container.querySelector('.custom-option')?.classList.add('selected'); const filterOption = container.querySelector('.filter-option'); filterOption.style.display = storedCredentials.length > 5 ? 'block' : 'none'; }
@@ -424,8 +536,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('vonageSearchForm')?.addEventListener('submit',handleVonageSearchSubmit);document.getElementById('vonage_purchase_button')?.addEventListener('click',handlePurchaseButtonClick);document.getElementById('vonage_bulk_npa_purchase_button')?.addEventListener('click',handleBulkNpaPurchaseClick);document.getElementById('vonage_configure_button')?.addEventListener('click',handleConfigureClick);document.getElementById('vonage_export_button')?.addEventListener('click',handleExportClick);document.getElementById('search-results-container')?.addEventListener('change',e=>{if(e.target.classList.contains('did-checkbox'))updateSelectedCount();});
     const mdf=document.getElementById('vonageModifyDidForm');if(mdf){mdf.addEventListener('submit',handleVonageModifyDidSubmit);document.getElementById('vonageModify_mode_toggle')?.addEventListener('change',function(){const c=this.checked;document.getElementById('vonageModify_mode_status').textContent=c?'CSV Upload':'Manual Entry';document.getElementById('vonageModify_csv_section').style.display=c?'block':'none';document.getElementById('vonageModify_manual_section').style.display=c?'none':'block';});document.getElementById('vonageModify_country_mode_toggle')?.addEventListener('change',function(){const m=this.checked;document.getElementById('vonageModify_country_other_container').style.display=m?'block':'none';document.querySelector('#vonageModifyDidForm .country-mode-status').textContent=m?'Other (Manual)':'US/CA (Auto-Detect)';});mdf.querySelectorAll('.toggle input[data-config-param]').forEach(cb=>{const t=document.getElementById(cb.dataset.inputTarget);if(t){cb.addEventListener('change',()=>{t.disabled=!cb.checked;if(t.id.includes('voiceCallback'))document.getElementById('vonageModify_voiceCallbackType').dispatchEvent(new Event('change'));});t.disabled=!cb.checked;}});const mvt=document.getElementById('vonageModify_voiceCallbackType'),msf=document.getElementById('vonage_modify_sip_failover_container'),mc=()=>{const t=document.getElementById('vonageModify_voiceCallbackType_toggle')?.checked,v=document.getElementById('vonageModify_voiceCallbackValue_toggle').checked,s=mvt.value==='sip';document.getElementById('vonageModify_voiceCallbackValue').disabled=!t||!v;msf.style.display=(t&&s)?'flex':'none';document.getElementById('vonageModify_voiceCallbackValue').setAttribute('list',s?'vonageModify_storedUrisDatalist':'');};mvt?.addEventListener('change',mc);document.getElementById('vonageModify_voiceCallbackType_toggle')?.addEventListener('change',mc);document.getElementById('vonageModify_voiceCallbackValue_toggle')?.addEventListener('change',mc);mc();}
     const cvt=document.getElementById('vonage_config_voiceCallbackType');if(cvt){const tcf=function(){const s=this.value==='sip';document.getElementById('vonage_config_voiceCallbackValue').setAttribute('list',s?'stored-uris-list':'');document.getElementById('vonage_config_sip_failover_container').style.display=s?'block':'none';};cvt.addEventListener('change',tcf);tcf.call(cvt);}
+    
+    // --- START: MODIFICATION ---
     document.getElementById('vonageReleaseDidForm')?.addEventListener('submit', handleVonageReleaseDidSubmit);
-    document.getElementById('vonageRelease_country_mode_toggle')?.addEventListener('change', function() { const isManual = this.checked; document.getElementById('vonageRelease_country_other_container').style.display = isManual ? 'block' : 'none'; document.querySelector('#vonageReleaseDidForm .country-mode-status').textContent = isManual ? 'Other (Manual)' : 'US/CA (Auto-Detect)'; });
+    document.getElementById('vonageRelease_country_mode_toggle')?.addEventListener('change', function() {
+        const isManual = this.checked;
+        document.getElementById('vonageRelease_country_other_container').style.display = isManual ? 'block' : 'none';
+        document.querySelector('#vonageReleaseDidForm .country-mode-status').textContent = isManual ? 'Other (Manual)' : 'US/CA (Auto-Detect)';
+    });
+    // --- END: MODIFICATION ---
+    
     document.querySelectorAll('.stop-button').forEach(btn => btn.addEventListener('click', stopAllOperations));
 });
 // --- END OF FILE static/js/script.js ---
