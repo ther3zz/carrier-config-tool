@@ -84,8 +84,6 @@ async function handleSaveCredentialChanges(form, originalCredData) { if (!master
 async function handleDeleteCredential(credentialName) { if (!credentialName || !masterKey) return; if (confirm(`Are you sure you want to delete "${credentialName}"? This action cannot be undone.`)) { displayResponse(`Deleting '${credentialName}'...`, 'pending'); try { const response = await apiFetch('/api/credentials/delete', { method: 'POST', body: JSON.stringify({ name: credentialName }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to delete'); displayResponse(data.message, 'success'); await handleSetMasterKey(); } catch (error) { handleFetchError(error, `Delete Credential`); } } }
 async function handleBulkImportCredentials() { if (!masterKey) { displayResponse("Error: Master Key must be set before importing.", "error"); return; } const textArea = document.getElementById('bulkCredentialInput'); const statusList = document.getElementById('importStatusList'); const statusArea = document.getElementById('importStatusArea'); const rawText = textArea.value; statusArea.querySelector('p').style.display = 'none'; statusList.innerHTML = ''; const lines = rawText.split('\n').filter(line => line.trim() !== ''); if (lines.length === 0) { displayResponse("Import field is empty. Please paste your data.", "error"); return; } const credentialsToImport = []; const invalidLines = []; lines.forEach((line, index) => { const parts = line.split('\t'); if (parts.length === 3 && parts[0].trim() && parts[1].trim() && parts[2].trim()) { credentialsToImport.push({ name: parts[0].trim(), apiKey: parts[1].trim(), apiSecret: parts[2].trim() }); } else { invalidLines.push(index + 1); } }); if (invalidLines.length > 0) { alert(`Warning: ${invalidLines.length} line(s) were skipped due to incorrect formatting (Line numbers: ${invalidLines.join(', ')}).`); } if (credentialsToImport.length === 0) { displayResponse("No valid credentials to import.", "error"); return; } let successCount = 0; for (const cred of credentialsToImport) { const li = document.createElement('li'); li.textContent = `Importing '${cred.name}'...`; statusList.appendChild(li); try { const response = await apiFetch('/api/credentials/save', { method: 'POST', body: JSON.stringify({ name: cred.name, api_key: cred.apiKey, api_secret: cred.apiSecret, master_key: masterKey }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); li.textContent = `SUCCESS: '${cred.name}' saved.`; li.className = 'status-success'; successCount++; } catch (error) { li.textContent = `FAILED: '${cred.name}' - ${error.message}`; li.className = 'status-error'; } } displayResponse(`Bulk import finished. ${successCount} of ${credentialsToImport.length} credentials saved successfully.`, successCount === credentialsToImport.length ? 'success' : 'error'); textArea.value = ''; await handleSetMasterKey(); }
 async function handleImportFromFile() { const fileInput = document.getElementById('credentialFileUpload'); const statusList = document.getElementById('importStatusList'); const statusArea = document.getElementById('importStatusArea'); if (!masterKey) { displayResponse("Error: Master Key must be set before importing.", "error"); return; } const file = fileInput.files[0]; if (!file) { displayResponse("Error: Please select a credentials.json file to upload.", "error"); return; } statusArea.querySelector('p').style.display = 'none'; statusList.innerHTML = `<li>Uploading and processing '${file.name}'...</li>`; const formData = new FormData(); formData.append('credential_file', file); formData.append('master_key', masterKey); try { const response = await apiFetch('/api/credentials/import', { method: 'POST', body: formData }); const data = await response.json(); if (!response.ok) { throw new Error(data.error || 'An unknown error occurred during import.'); } statusList.innerHTML = ''; const { success, failed } = data.results; success.forEach(name => { const li = document.createElement('li'); li.textContent = `SUCCESS: Migrated '${name}' to database.`; li.className = 'status-success'; statusList.appendChild(li); }); failed.forEach(item => { const li = document.createElement('li'); li.textContent = `FAILED: '${item.name}' - ${item.reason}`; li.className = 'status-error'; statusList.appendChild(li); }); const finalMessage = `File import finished. Success: ${success.length}, Failed: ${failed.length}.`; displayResponse(finalMessage, failed.length > 0 ? 'error' : 'success'); if (success.length > 0) { await handleSetMasterKey(); } } catch (error) { handleFetchError(error, 'File Import'); statusList.innerHTML = `<li class="status-error">Error during import: ${error.message}</li>`; } finally { fileInput.value = ''; } }
-
-// --- START: MODIFICATION (Revert rekey handler to simple JSON) ---
 async function handleRekeyCredentials() {
     const oldKeyInput = document.getElementById('oldMasterKeyInput');
     const newKeyInput = document.getElementById('newMasterKeyInput');
@@ -180,7 +178,6 @@ async function handleRekeyCredentials() {
         statusList.innerHTML = `<li class="status-error">Operation failed. See main response area for details.</li>`;
     }
 }
-// --- END: MODIFICATION ---
 
 // --- Vonage Functions ---
 async function handleFetchSubaccounts(event) { event.preventDefault(); displayResponse('Fetching subaccounts...', 'pending'); const listContainer = document.getElementById('vonage-subaccount-list-container'); const listEl = document.getElementById('vonage-subaccount-list'); listEl.innerHTML = ''; try { const auth = getAuthPayload('vonage_manage_subaccounts'); const response = await apiFetch('/api/vonage/subaccounts', { method: 'POST', body: JSON.stringify(auth) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to fetch subaccounts'); vonageSubaccounts = data.subaccounts || []; displayResponse(`Successfully fetched ${vonageSubaccounts.length} subaccounts.`, 'success'); renderSubaccounts(); listContainer.style.display = vonageSubaccounts.length > 0 ? 'block' : 'none'; } catch (error) { handleFetchError(error, 'Fetch Subaccounts'); } }
@@ -190,7 +187,69 @@ async function handleSubaccountActions(event) { const target = event.target; if 
 function generateVonagePsipPayload() { let acl = document.getElementById('vonage_psip_acl').value.split('\n').map(ip => ip.trim()).filter(ip => ip); if (vonageIncludeStoredIps) { const storedAcl = vonageStoredIps.map(item => item.ip); acl = [...new Set([...acl, ...storedAcl])]; } return { name: document.getElementById('vonage_psip_name').value, trunk_name: document.getElementById('vonage_psip_trunk_name').value, tls: document.getElementById('vonage_psip_tls').value, digest_auth: document.getElementById('vonage_psip_digest_auth').checked, srtp: document.getElementById('vonage_psip_srtp').value, acl: acl, domain_type: document.getElementById('vonage_psip_domain_type').value }; }
 function generateVonagePsipCurlCommand() { try { const auth = getAuthPayload('vonage_psip'); const payload = generateVonagePsipPayload(); return `curl -X POST https://api.nexmo.com/v2/psip/domains \\ -H 'Content-Type: application/json' \\ -u '${auth.username}:${auth.password}' \\ -d '${JSON.stringify(payload, null, 2)}'`; } catch (error) { return `Error generating cURL: ${error.message}`; } }
 async function handleVonagePsipSubmit(event) { event.preventDefault(); displayResponse('Sending PSIP domain creation request...', 'pending'); try { const auth = getAuthPayload('vonage_psip'); const payload = generateVonagePsipPayload(); const body = { ...auth, ...payload }; const response = await apiFetch('/api/vonage/psip/create', { method: 'POST', body: JSON.stringify(body) }); const data = await response.json(); handleBackendResponse(data); } catch (error) { handleFetchError(error, 'Create PSIP Domain'); } }
-async function handleFetchPsipDomains(event) { event.preventDefault(); displayResponse('Fetching PSIP domains...', 'pending'); const listContainer = document.getElementById('vonage-psip-domain-list-container'); const listEl = document.getElementById('vonage-psip-domain-list'); listEl.innerHTML = ''; try { const auth = getAuthPayload('vonage_manage_psip'); const response = await apiFetch('/api/vonage/psip', { method: 'POST', body: JSON.stringify(auth) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to fetch domains'); vonagePsipDomains = data.domains || []; displayResponse(`Successfully fetched ${vonagePsipDomains.length} domains.`, 'success'); listContainer.style.display = vonagePsipDomains.length > 0 ? 'block' : 'none'; } catch (error) { handleFetchError(error, 'Fetch PSIP Domains'); } }
+async function handleFetchPsipDomains(event) { 
+    event.preventDefault(); 
+    displayResponse('Fetching PSIP domains...', 'pending'); 
+    const listContainer = document.getElementById('vonage-psip-domain-list-container'); 
+    const listEl = document.getElementById('vonage-psip-domain-list'); 
+    listEl.innerHTML = ''; 
+    try { 
+        const auth = getAuthPayload('vonage_manage_psip'); 
+        const response = await apiFetch('/api/vonage/psip', { method: 'POST', body: JSON.stringify(auth) }); 
+        const data = await response.json(); 
+        if (!response.ok) throw new Error(data.error || 'Failed to fetch domains'); 
+        
+        vonagePsipDomains = Array.isArray(data) ? data : [];
+        
+        // --- START: MODIFICATION (Call the new render function) ---
+        renderPsipDomains(); 
+        // --- END: MODIFICATION ---
+
+        displayResponse(`Successfully fetched ${vonagePsipDomains.length} domains.`, 'success'); 
+        listContainer.style.display = vonagePsipDomains.length > 0 ? 'block' : 'none'; 
+    } catch (error) { 
+        handleFetchError(error, 'Fetch PSIP Domains'); 
+    } 
+}
+// --- START: MODIFICATION (Add the new render function) ---
+function renderPsipDomains() {
+    const container = document.getElementById('vonage-psip-domain-list');
+    const template = document.getElementById('vonage-psip-domain-template');
+    container.innerHTML = ''; // Clear previous results
+
+    if (!vonagePsipDomains || vonagePsipDomains.length === 0) {
+        container.innerHTML = '<p>No PSIP domains found on this account.</p>';
+        return;
+    }
+
+    vonagePsipDomains.forEach(domain => {
+        const clone = template.content.cloneNode(true);
+        
+        // Populate the summary part of the template
+        clone.querySelector('.domain-name-display').textContent = domain.name;
+        const typeDisplay = clone.querySelector('.domain-type-display');
+        if (domain.domain_type) {
+            typeDisplay.textContent = `(${domain.domain_type})`;
+        } else {
+            typeDisplay.textContent = ''; // Hide if not present
+        }
+        
+        // Populate the full editable form inside the <details> section
+        const form = clone.querySelector('.vonage-psip-domain-form');
+        form.querySelector('.original-domain-name').value = domain.name;
+        form.querySelector('.domain-name').value = domain.name;
+        form.querySelector('.trunk-name').value = domain.trunk_name || '';
+        form.querySelector('.tls').value = domain.tls || 'optional';
+        form.querySelector('.digest-auth').checked = domain.digest_auth || false;
+        form.querySelector('.digest-auth-status').textContent = (domain.digest_auth || false) ? 'On' : 'Off';
+        form.querySelector('.srtp').value = domain.srtp || 'optional';
+        form.querySelector('.acl').value = (domain.acl || []).join('\n');
+        form.querySelector('.domain-type').value = domain.domain_type || 'trunk';
+
+        container.appendChild(clone);
+    });
+}
+// --- END: MODIFICATION ---
 async function handlePsipDomainActions(event) { /* Stub for future implementation */ }
 async function handleVonageSearchSubmit(event) { event.preventDefault(); displayResponse('Searching for available numbers...', 'pending'); document.getElementById('search-results-area').style.display = 'none'; document.getElementById('purchase-controls').style.display = 'none'; try { const auth = getAuthPayload('vonage_search'); const payload = { ...auth, country: document.getElementById('vonage_search_country').value, type: document.getElementById('vonage_search_type').value, pattern: document.getElementById('vonage_search_pattern').value, search_pattern: document.getElementById('vonage_search_search_pattern').value, features: document.getElementById('vonage_search_features').value, }; const response = await apiFetch('/api/vonage/dids/search', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Search failed'); renderSearchResults(data.numbers); } catch (error) { handleFetchError(error, 'DID Search'); } }
 function renderSearchResults(numbers) { const resultsArea = document.getElementById('search-results-area'); const container = document.getElementById('search-results-container').querySelector('ul'); const countEl = document.getElementById('search-count'); const purchaseButton = document.getElementById('vonage_purchase_button'); container.innerHTML = ''; if (!numbers || numbers.length === 0) { countEl.textContent = '0'; container.innerHTML = '<li>No numbers found matching your criteria.</li>'; resultsArea.style.display = 'block'; purchaseButton.disabled = true; return; } countEl.textContent = numbers.length; numbers.forEach(num => { const li = document.createElement('li'); const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'did-checkbox'; checkbox.value = num.msisdn; checkbox.dataset.country = document.getElementById('vonage_search_country').value.toUpperCase(); const label = document.createElement('label'); label.appendChild(checkbox); label.append(` ${num.msisdn} - Features: ${num.features.join(', ')} - Cost: ${num.cost}`); li.appendChild(label); container.appendChild(li); }); resultsArea.style.display = 'block'; document.getElementById('purchase-controls').style.display = 'block'; updateSelectedCount(); }
