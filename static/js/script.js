@@ -59,12 +59,10 @@ const countryDialingCodes = countryData.reduce((acc, country) => { acc[country.c
 async function apiFetch(url, options = {}) {
     const headers = new Headers(options.headers || {});
     if (appSettings.store_logs_enabled) { headers.set('X-Log-Request', 'true'); }
-    // --- START: MODIFICATION (Handle FormData) ---
     // Do not set Content-Type for FormData, the browser does it with the correct boundary.
     if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) { 
         headers.set('Content-Type', 'application/json');
     }
-    // --- END: MODIFICATION ---
     options.headers = headers;
     return fetch(url, options);
 }
@@ -86,7 +84,79 @@ async function handleSaveCredentialChanges(form, originalCredData) { if (!master
 async function handleDeleteCredential(credentialName) { if (!credentialName || !masterKey) return; if (confirm(`Are you sure you want to delete "${credentialName}"? This action cannot be undone.`)) { displayResponse(`Deleting '${credentialName}'...`, 'pending'); try { const response = await apiFetch('/api/credentials/delete', { method: 'POST', body: JSON.stringify({ name: credentialName }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to delete'); displayResponse(data.message, 'success'); await handleSetMasterKey(); } catch (error) { handleFetchError(error, `Delete Credential`); } } }
 async function handleBulkImportCredentials() { if (!masterKey) { displayResponse("Error: Master Key must be set before importing.", "error"); return; } const textArea = document.getElementById('bulkCredentialInput'); const statusList = document.getElementById('importStatusList'); const statusArea = document.getElementById('importStatusArea'); const rawText = textArea.value; statusArea.querySelector('p').style.display = 'none'; statusList.innerHTML = ''; const lines = rawText.split('\n').filter(line => line.trim() !== ''); if (lines.length === 0) { displayResponse("Import field is empty. Please paste your data.", "error"); return; } const credentialsToImport = []; const invalidLines = []; lines.forEach((line, index) => { const parts = line.split('\t'); if (parts.length === 3 && parts[0].trim() && parts[1].trim() && parts[2].trim()) { credentialsToImport.push({ name: parts[0].trim(), apiKey: parts[1].trim(), apiSecret: parts[2].trim() }); } else { invalidLines.push(index + 1); } }); if (invalidLines.length > 0) { alert(`Warning: ${invalidLines.length} line(s) were skipped due to incorrect formatting (Line numbers: ${invalidLines.join(', ')}).`); } if (credentialsToImport.length === 0) { displayResponse("No valid credentials to import.", "error"); return; } let successCount = 0; for (const cred of credentialsToImport) { const li = document.createElement('li'); li.textContent = `Importing '${cred.name}'...`; statusList.appendChild(li); try { const response = await apiFetch('/api/credentials/save', { method: 'POST', body: JSON.stringify({ name: cred.name, api_key: cred.apiKey, api_secret: cred.apiSecret, master_key: masterKey }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); li.textContent = `SUCCESS: '${cred.name}' saved.`; li.className = 'status-success'; successCount++; } catch (error) { li.textContent = `FAILED: '${cred.name}' - ${error.message}`; li.className = 'status-error'; } } displayResponse(`Bulk import finished. ${successCount} of ${credentialsToImport.length} credentials saved successfully.`, successCount === credentialsToImport.length ? 'success' : 'error'); textArea.value = ''; await handleSetMasterKey(); }
 
-// --- START: MODIFICATION (Add File Import Handler) ---
+// --- START: MODIFICATION (Add Re-keying Handler) ---
+async function handleRekeyCredentials() {
+    const oldKeyInput = document.getElementById('oldMasterKeyInput');
+    const newKeyInput = document.getElementById('newMasterKeyInput');
+    const statusList = document.getElementById('rekeyStatusList');
+
+    const oldKey = oldKeyInput.value;
+    const newKey = newKeyInput.value;
+    statusList.innerHTML = '';
+
+    if (!oldKey || !newKey) {
+        displayResponse("Error: Both the old and new Master Keys are required.", "error");
+        return;
+    }
+    if (oldKey === newKey) {
+        displayResponse("Error: The new Master Key cannot be the same as the old one.", "error");
+        return;
+    }
+
+    const confirmation = prompt(
+        "DANGER: This action is irreversible. If the 'Old Master Key' is incorrect, all credential data will be permanently corrupted.\n\n" +
+        "To proceed, type 'REKEY NOW' in the box below and click OK."
+    );
+
+    if (confirmation !== 'REKEY NOW') {
+        displayResponse("Re-keying operation cancelled by user.", "pending");
+        return;
+    }
+    
+    displayResponse("Re-keying all credentials... This may take a moment.", "pending");
+    const payload = {
+        old_master_key: oldKey,
+        new_master_key: newKey
+    };
+
+    try {
+        const response = await apiFetch('/api/credentials/rekey', { method: 'POST', body: JSON.stringify(payload) });
+        const data = await response.json();
+
+        if (!response.ok) {
+            // Throw an error that includes the parsed JSON data for better handling in catch
+            throw data;
+        }
+
+        displayResponse(
+            "SUCCESS: All credentials have been re-keyed. \n\n" +
+            "IMPORTANT: Your session is still using the OLD master key. To continue working, please enter your NEW master key in the 'Session Master Key' field at the top and click 'Set & Load'.",
+            "success"
+        );
+        oldKeyInput.value = '';
+        newKeyInput.value = '';
+
+    } catch (error) {
+        console.error("Re-keying failed:", error);
+        let errorMessage = `Error: ${error.error || "An unknown error occurred."}`;
+        
+        // Display detailed failure reasons if the API provides them
+        if (error.details && Array.isArray(error.details)) {
+            errorMessage += "\n\nNo changes were saved to the database. See details below.";
+            error.details.forEach(item => {
+                const li = document.createElement('li');
+                li.textContent = `FAILED: '${item.name}' - Reason: ${item.reason}`;
+                li.className = 'status-error';
+                statusList.appendChild(li);
+            });
+        }
+        
+        displayResponse(errorMessage, 'error');
+    }
+}
+// --- END: MODIFICATION ---
+
+
 async function handleImportFromFile() {
     const fileInput = document.getElementById('credentialFileUpload');
     const statusList = document.getElementById('importStatusList');
@@ -148,7 +218,6 @@ async function handleImportFromFile() {
         fileInput.value = ''; // Reset file input
     }
 }
-// --- END: MODIFICATION ---
 
 // ... (Rest of the file is unchanged, including selectors, tabs, accordions, Vonage functions, etc.)
 function populateCredentialSelector(container) { const triggerText = container.querySelector('.custom-select-trigger span'); const optionsContainer = container.querySelector('.custom-options'); const filterInput = container.querySelector('.credential-filter-input'); const valueInput = container.querySelector('.credential-selector-value'); if (!triggerText || !optionsContainer || !filterInput || !valueInput) return; optionsContainer.querySelectorAll('.custom-option:not(.filter-option)').forEach(opt => opt.remove()); filterInput.value = ''; const createOption = (text, value) => { const option = document.createElement('div'); option.classList.add('custom-option'); option.dataset.value = value; option.textContent = text; return option; }; let defaultText, defaultValue; if (!masterKey || storedCredentials.length === 0) { defaultText = masterKey ? '-- No Credentials Found --' : '-- Set Master Key First --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); } else { defaultText = '-- Select a Credential --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); storedCredentials.forEach(c => { optionsContainer.appendChild(createOption(`${c.name} (${c.api_key_hint})`, c.name)); }); } const manualOpt = createOption('== Manual Entry ==', 'manual'); manualOpt.style.fontWeight = 'bold'; optionsContainer.appendChild(manualOpt); triggerText.textContent = defaultText; valueInput.value = defaultValue; container.querySelector('.custom-option')?.classList.add('selected'); const filterOption = container.querySelector('.filter-option'); filterOption.style.display = storedCredentials.length > 5 ? 'block' : 'none'; }
@@ -205,8 +274,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('addCredentialForm')?.addEventListener('submit', handleAddCredential);
     document.getElementById('credentialListContainer')?.addEventListener('click', handleCredentialListActions);
     document.getElementById('importCredentialsButton')?.addEventListener('click', handleBulkImportCredentials);
-    // --- START: MODIFICATION (Add File Import Listener) ---
     document.getElementById('importFromFileButton')?.addEventListener('click', handleImportFromFile);
+    // --- START: MODIFICATION (Add Re-keying Listener) ---
+    document.getElementById('rekeyCredentialsButton')?.addEventListener('click', handleRekeyCredentials);
     // --- END: MODIFICATION ---
     
     // ... (All other event listeners are unchanged) ...
