@@ -3,9 +3,7 @@
 from flask import Blueprint, request, jsonify
 from utils import credentials_manager
 from utils import settings_manager
-# --- START: MODIFICATION ---
 from utils.password_generator import generate_secure_secret
-# --- END: MODIFICATION ---
 from . import client as vonage_client
 
 # Create a Blueprint for all Vonage-related API routes that the UI will call
@@ -14,13 +12,20 @@ vonage_bp = Blueprint('vonage', __name__, url_prefix='/api/vonage')
 def _get_credentials_from_request(data: dict):
     """Helper to consistently extract and decrypt credentials from a request payload."""
     master_key = data.get('master_key')
-    account_name = data.get('account_name')
     
-    if not master_key or not account_name:
-        raise ValueError("Master Key and Account Name are required.")
-        
-    # Use the master key to get the decrypted API key and secret
-    return credentials_manager.get_decrypted_credentials(account_name, master_key)
+    # Handle manual entry vs. stored credential
+    if data.get('account_name') and data.get('account_name') != 'manual':
+        account_name = data.get('account_name')
+        if not master_key or not account_name:
+            raise ValueError("Master Key and Account Name are required.")
+        return credentials_manager.get_decrypted_credentials(account_name, master_key)
+    else:
+        # Assumes manual entry if account_name is not provided or is 'manual'
+        username = data.get('username')
+        password = data.get('password')
+        if not username or not password:
+            raise ValueError("Manual entry requires both API Key and API Secret.")
+        return {'api_key': username, 'api_secret': password}
 
 
 # --- Subaccount Management Endpoints ---
@@ -29,7 +34,13 @@ def _get_credentials_from_request(data: dict):
 def get_subaccounts():
     data = request.get_json()
     try:
-        creds = _get_credentials_from_request(data)
+        # This endpoint specifically uses stored primary account credentials
+        master_key = data.get('master_key')
+        account_name = data.get('account_name')
+        if not master_key or not account_name:
+            raise ValueError("A stored Primary Account credential is required.")
+
+        creds = credentials_manager.get_decrypted_credentials(account_name, master_key)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
         result, status_code = vonage_client.list_subaccounts(
@@ -43,32 +54,28 @@ def get_subaccounts():
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
-# --- START: MODIFICATION (Update create_subaccount logic) ---
 @vonage_bp.route('/subaccounts/create', methods=['POST'])
 def create_subaccount():
     data = request.get_json()
     try:
-        # We need the master key to save the new credential later
         master_key = data.get('master_key')
-        if not master_key:
-            raise ValueError("Master Key is required to create and save a new subaccount.")
+        account_name = data.get('account_name')
+        if not master_key or not account_name:
+            raise ValueError("A stored Primary Account credential and Master Key are required.")
             
-        creds = _get_credentials_from_request(data)
+        creds = credentials_manager.get_decrypted_credentials(account_name, master_key)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
 
-        # Generate a secret if the user left the field blank
         secret = data.get('secret')
         if not secret:
             secret = generate_secure_secret()
 
-        # Extract subaccount creation specific data
         payload = {
             "name": data.get('name'),
             "secret": secret,
             "use_primary_account_balance": data.get('use_primary_balance', True)
         }
         
-        # Call the Vonage client to create the subaccount
         result, status_code = vonage_client.create_subaccount(
             primary_api_key=creds['api_key'],
             primary_api_secret=creds['api_secret'],
@@ -76,27 +83,23 @@ def create_subaccount():
             log_enabled=log_enabled
         )
         
-        # If creation was successful, save the new credentials to our database
         if status_code < 400:
             new_sub_name = result.get('name')
             new_sub_api_key = result.get('api_key')
             
             if new_sub_name and new_sub_api_key:
                 try:
-                    # Save the new credential using the name, new API key, and the secret we used
                     credentials_manager.save_credential(
                         name=new_sub_name,
                         api_key=new_sub_api_key,
-                        api_secret=secret, # Use the same secret we sent to the API
+                        api_secret=secret,
                         master_key=master_key
                     )
                     result['message'] = f"Successfully created subaccount '{new_sub_name}' and saved its credentials locally."
                 except Exception as e:
-                    # If saving fails, inform the user. The subaccount exists on Vonage's side.
                     result['message'] = (f"WARNING: Successfully created subaccount '{new_sub_name}' via Vonage API, "
                                        f"but FAILED to save its credentials locally. Please add them manually. Error: {str(e)}")
-                    # Change the status code to indicate a partial success/warning to the client
-                    status_code = 207 # Multi-Status
+                    status_code = 207
             else:
                 result['message'] = "Subaccount created, but API response was missing name or API key. Could not save locally."
         
@@ -105,13 +108,17 @@ def create_subaccount():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
-# --- END: MODIFICATION ---
 
 @vonage_bp.route('/subaccounts/update', methods=['POST'])
 def update_subaccount():
     data = request.get_json()
     try:
-        creds = _get_credentials_from_request(data)
+        master_key = data.get('master_key')
+        account_name = data.get('account_name')
+        if not master_key or not account_name:
+            raise ValueError("A stored Primary Account credential is required.")
+
+        creds = credentials_manager.get_decrypted_credentials(account_name, master_key)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
         payload = {
@@ -137,6 +144,62 @@ def update_subaccount():
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
 
+# --- START: MODIFICATION (Add PSIP Trunking Endpoints) ---
+@vonage_bp.route('/psip/create', methods=['POST'])
+def create_psip_domain():
+    data = request.get_json()
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+
+        # Extract only the PSIP-specific payload keys
+        payload = {
+            'name': data.get('name'),
+            'trunk_name': data.get('trunk_name'),
+            'tls': data.get('tls'),
+            'digest_auth': data.get('digest_auth'),
+            'srtp': data.get('srtp'),
+            'acl': data.get('acl', []),
+            'domain_type': data.get('domain_type')
+        }
+
+        result, status_code = vonage_client.create_psip(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            payload=payload,
+            log_enabled=log_enabled
+        )
+        # Add a clear message for the UI
+        if status_code < 400:
+            result['message'] = f"Successfully sent PSIP domain creation request for '{payload.get('name')}'."
+            result['status_code'] = status_code
+
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
+
+@vonage_bp.route('/psip', methods=['POST'])
+def get_psip_domains():
+    data = request.get_json()
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        
+        result, status_code = vonage_client.get_psip_domains(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            log_enabled=log_enabled
+        )
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+# --- END: MODIFICATION ---
+
+
 # --- DID Management Endpoints ---
 
 @vonage_bp.route('/dids/search', methods=['POST'])
@@ -146,6 +209,7 @@ def search_dids():
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
+        # Extract only the search-specific params
         params = {
             "country": data.get('country'),
             "type": data.get('type'),
@@ -193,14 +257,7 @@ def buy_did():
 def update_did():
     data = request.get_json()
     try:
-        # This can handle manual entry or stored credentials
-        if data.get('account_name'):
-            creds = _get_credentials_from_request(data)
-        else:
-            creds = {'api_key': data.get('username'), 'api_secret': data.get('password')}
-            if not creds['api_key'] or not creds['api_secret']:
-                raise ValueError("Manual entry requires both API Key and Secret.")
-
+        creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
         result, status_code = vonage_client.update_did(
@@ -222,14 +279,7 @@ def update_did():
 def release_did():
     data = request.get_json()
     try:
-        # Release can also use manual or stored creds
-        if data.get('account_name'):
-            creds = _get_credentials_from_request(data)
-        else:
-            creds = {'api_key': data.get('username'), 'api_secret': data.get('password')}
-            if not creds['api_key'] or not creds['api_secret']:
-                raise ValueError("Manual entry requires both API Key and Secret.")
-
+        creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
 
         result, status_code = vonage_client.cancel_did(
@@ -244,10 +294,4 @@ def release_did():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
-
-
-# Add stubs for other UI functions if they have corresponding backend calls.
-# The current JS file seems to call endpoints that are covered above.
-# If you add more UI features (like PSIP trunking from the UI), their endpoints would go here.
-
 # --- END OF FILE vendors/vonage/routes.py ---
