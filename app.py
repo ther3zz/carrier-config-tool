@@ -3,7 +3,7 @@
 import os
 import io
 import zipfile
-import json
+import json 
 from datetime import datetime
 from flask import Flask, render_template, jsonify, send_file, request
 
@@ -135,75 +135,110 @@ def delete_credential():
             return jsonify({"error": f"Credential '{name}' not found."}), 404
     except Exception as e: return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
 
-@app.route('/api/credentials/import', methods=['POST'])
-def import_credentials_from_file():
-    if 'credential_file' not in request.files: return jsonify({"error": "No file part in the request"}), 400
-    file = request.files['credential_file']
-    master_key = request.form.get('master_key')
-    if file.filename == '': return jsonify({"error": "No file selected"}), 400
-    if not master_key: return jsonify({"error": "Master Key is required for decryption"}), 400
-    if not file or not file.filename.endswith('.json'): return jsonify({"error": "Invalid file type, please upload a .json file"}), 400
-    try:
-        content = file.read().decode('utf-8')
-        encrypted_creds = json.loads(content)
-    except Exception as e:
-        return jsonify({"error": f"Failed to read or parse JSON file: {str(e)}"}), 400
-    results = {"success": [], "failed": []}
-    for name, data in encrypted_creds.items():
-        try:
-            api_key = data.get('api_key')
-            encrypted_secret = data.get('encrypted_secret')
-            if not api_key or not encrypted_secret:
-                results['failed'].append({"name": name, "reason": "Missing api_key or encrypted_secret."})
-                continue
-            decrypted_secret = encryption.decrypt_data(encrypted_secret, master_key)
-            credentials_manager.save_credential(name=name, api_key=api_key, api_secret=decrypted_secret, master_key=master_key, voice_callback_type=data.get('default_voice_callback_type', ''), voice_callback_value=data.get('default_voice_callback_value', ''))
-            results['success'].append(name)
-        except ValueError as e: results['failed'].append({"name": name, "reason": str(e)})
-        except Exception as e: results['failed'].append({"name": name, "reason": f"An unexpected error occurred: {str(e)}"})
-    return jsonify({"message": "Import process finished.", "results": results}), 200
-
-# --- START: MODIFICATION (Add Re-Key Endpoint) ---
+# --- START: MODIFICATION (Add Re-keying Endpoint) ---
 @app.route('/api/credentials/rekey', methods=['POST'])
-def rekey_all_credentials_endpoint():
+def rekey_credentials():
     """
-    Decrypts all credentials with an old master key and re-encrypts them with a new one.
+    Decrypts all credentials with an old master key and re-encrypts them
+    with a new master key.
     """
     data = request.get_json()
     if not data:
         return jsonify({"error": "Invalid JSON payload"}), 400
 
-    old_master_key = data.get('old_master_key')
-    new_master_key = data.get('new_master_key')
+    old_key = data.get('old_master_key')
+    new_key = data.get('new_master_key')
 
-    if not old_master_key or not new_master_key:
-        return jsonify({"error": "Both old and new master keys are required."}), 400
+    if not old_key or not new_key:
+        return jsonify({"error": "Both old and new master keys are required"}), 400
+    
+    if old_key == new_key:
+        return jsonify({"error": "New master key cannot be the same as the old master key."}), 400
 
     try:
-        results = credentials_manager.rekey_all_credentials(old_master_key, new_master_key)
+        results = credentials_manager.rekey_all_credentials(old_key, new_key)
         
-        # Check if there were any failures, which likely means the old key was wrong
-        if results['failed']:
-             # Return a 400 Bad Request if any credential failed to decrypt
+        if results.get('failed'):
+            # The manager aborts the save if any credential fails, so this is an operational failure.
             return jsonify({
-                "error": "Re-keying failed for one or more credentials. The 'Old Master Key' is likely incorrect.",
-                "results": results
+                "error": "Re-keying failed for one or more credentials. No changes were saved.",
+                "details": results['failed']
             }), 400
         
         return jsonify({
-            "message": "Re-keying process completed successfully.",
+            "message": "All credentials re-keyed successfully.",
             "results": results
         }), 200
-        
+
     except Exception as e:
-        # Catch any other unexpected errors during the process
+        # This catches broader issues, like if the entire credential store can't be read.
         return jsonify({"error": f"An unexpected server error occurred during re-keying: {str(e)}"}), 500
 # --- END: MODIFICATION ---
 
+@app.route('/api/credentials/import', methods=['POST'])
+def import_credentials_from_file():
+    """
+    Imports credentials from an uploaded encrypted JSON file.
+    """
+    if 'credential_file' not in request.files:
+        return jsonify({"error": "No file part in the request"}), 400
+    
+    file = request.files['credential_file']
+    master_key = request.form.get('master_key')
+
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+    if not master_key:
+        return jsonify({"error": "Master Key is required for decryption"}), 400
+    if not file or not file.filename.endswith('.json'):
+        return jsonify({"error": "Invalid file type, please upload a .json file"}), 400
+
+    try:
+        content = file.read().decode('utf-8')
+        encrypted_creds = json.loads(content)
+    except Exception as e:
+        return jsonify({"error": f"Failed to read or parse JSON file: {str(e)}"}), 400
+
+    results = {"success": [], "failed": []}
+    
+    for name, data in encrypted_creds.items():
+        try:
+            api_key = data.get('api_key')
+            encrypted_secret = data.get('encrypted_secret')
+
+            if not api_key or not encrypted_secret:
+                results['failed'].append({"name": name, "reason": "Missing api_key or encrypted_secret."})
+                continue
+            
+            # Decrypt the secret using the provided master key
+            decrypted_secret = encryption.decrypt_data(encrypted_secret, master_key)
+            
+            # Re-save the credential. The save_credential function will handle re-encryption
+            # with the server's current salt and save it to the configured storage (DB).
+            credentials_manager.save_credential(
+                name=name,
+                api_key=api_key,
+                api_secret=decrypted_secret,
+                master_key=master_key,
+                voice_callback_type=data.get('default_voice_callback_type', ''),
+                voice_callback_value=data.get('default_voice_callback_value', '')
+            )
+            results['success'].append(name)
+        except ValueError as e:
+            # This will catch decryption errors (wrong master key) or saving errors
+            results['failed'].append({"name": name, "reason": str(e)})
+        except Exception as e:
+            results['failed'].append({"name": name, "reason": f"An unexpected error occurred: {str(e)}"})
+
+    return jsonify({
+        "message": "Import process finished.",
+        "results": results
+    }), 200
+
 # --- Log Management Routes ---
-# ... (unchanged) ...
 @app.route('/api/logs/download')
 def download_logs():
+    # ... (function unchanged) ...
     log_dir = os.path.abspath('logs')
     if not os.path.isdir(log_dir):
         return jsonify({"error": "Log directory not found."}), 404
@@ -220,12 +255,15 @@ def download_logs():
     if not log_files_found: zip_filename = f"logs_empty_{datetime.utcnow().strftime('%Y-%m-%d')}.zip"
     return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=zip_filename)
 
+
 @app.route('/api/logs/clear', methods=['POST'])
 def clear_log_file():
+    # ... (function unchanged) ...
     if clear_logs():
         return jsonify({"message": "All log files cleared successfully."}), 200
     else:
         return jsonify({"error": "Failed to clear log files."}), 500
+
 
 # --- Main Execution ---
 if __name__ == '__main__':
