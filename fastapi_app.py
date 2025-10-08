@@ -224,9 +224,13 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
                 "created_by": "FastAPI Provisioning Endpoint"
             }
             notification_service.fire_and_forget("subaccount.created", notif_payload)
+            # --- START: MODIFICATION ---
+            # After saving, immediately re-fetch the credentials using the canonical function
+            # This ensures we use the correctly stored and decrypted secret for the next steps.
+            subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
+            # --- END: MODIFICATION ---
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save new subaccount credentials to the database: {e}")
-        subaccount_creds = {"api_key": new_api_key, "api_secret": new_secret, "account_name": new_subaccount_name, "default_voice_callback_type": None, "default_voice_callback_value": None}
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save or re-fetch new subaccount credentials: {e}")
     
     if log_enabled: logger.log_request_response(operation_name="Incoming Provisioning Request", request_details={"client_ip": request_obj.client.host, "payload": request.model_dump()}, response_data={"status": "Request accepted for processing"}, status_code=202, account_id=subaccount_creds['api_key'])
     
@@ -258,7 +262,6 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
         else: configuration_status = f"Failed to apply settings from {source_of_config}: {update_result.get('error', 'Unknown error')}"
     else: configuration_status = "Skipped: No settings provided in request and no defaults configured for this group."
     
-    # --- START: MODIFICATION ---
     notif_payload = {
         "groupid": request.groupid,
         "did": msisdn,
@@ -269,7 +272,6 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
         "configuration_status": configuration_status
     }
     notification_service.fire_and_forget("did.provisioned", notif_payload)
-    # --- END: MODIFICATION ---
 
     return ProvisioningResponse(message=f"Successfully provisioned DID {msisdn} for groupid '{request.groupid}'.", provisioned_did=msisdn, country=country, subaccount_name=subaccount_creds['account_name'], subaccount_api_key=subaccount_creds['api_key'], configuration_status=configuration_status)
 
@@ -362,7 +364,6 @@ async def release_did_endpoint(request: DIDReleaseRequest, request_obj: Request)
     result_data, status_code = vonage_client.cancel_did(username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country_to_use, msisdn=msisdn_to_use, log_enabled=log_enabled)
     if status_code >= 400: raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to release DID {request.did}. Vonage API error: {result_data.get('error', 'Unknown error')}")
     
-    # --- START: MODIFICATION ---
     notif_payload = {
         "groupid": request.groupid,
         "did": request.did,
@@ -371,7 +372,6 @@ async def release_did_endpoint(request: DIDReleaseRequest, request_obj: Request)
         "subaccount_api_key": subaccount_creds['api_key']
     }
     notification_service.fire_and_forget("did.released", notif_payload)
-    # --- END: MODIFICATION ---
 
     return ReleaseResponse(message=f"Successfully released DID {request.did} from account for groupid '{request.groupid}'.", released_did=request.did, subaccount_name=subaccount_creds['account_name'])
 
@@ -524,9 +524,11 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
                 "created_by": "FastAPI Batch Provisioning Endpoint"
             }
             notification_service.fire_and_forget("subaccount.created", notif_payload)
+            # --- START: MODIFICATION ---
+            subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
+            # --- END: MODIFICATION ---
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save new credentials: {e}")
-        subaccount_creds = {"api_key": new_api_key, "api_secret": new_secret, "account_name": new_subaccount_name}
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save or re-fetch new credentials: {e}")
 
     results = []
     for i in range(0, len(request.npas), max_concurrency):
@@ -608,7 +610,6 @@ async def _process_single_did_provision(npa, groupid, subaccount_creds, request,
         if update_status >= 400:
             configuration_status = f"Failed to apply configuration: {update_result.get('error', 'Unknown')}"
             
-        # --- START: MODIFICATION ---
         notif_payload = {
             "groupid": groupid,
             "did": msisdn,
@@ -620,7 +621,6 @@ async def _process_single_did_provision(npa, groupid, subaccount_creds, request,
             "configuration_status": configuration_status
         }
         notification_service.fire_and_forget("did.provisioned", notif_payload)
-        # --- END: MODIFICATION ---
 
         if update_status >= 400:
             return BatchProvisionResult(npa=npa, status='partial_success', provisioned_did=msisdn, detail=f"Provisioned DID {msisdn} but failed to apply configuration.")
