@@ -4,9 +4,7 @@ from flask import Blueprint, request, jsonify
 from utils import credentials_manager
 from utils import settings_manager
 from utils.password_generator import generate_secure_secret
-# --- START: MODIFICATION ---
 from utils import notification_service
-# --- END: MODIFICATION ---
 from . import client as vonage_client
 
 # Create a Blueprint for all Vonage-related API routes that the UI will call
@@ -103,7 +101,6 @@ def create_subaccount():
                     )
                     result['message'] = f"Successfully created subaccount '{new_sub_name}' and saved its credentials locally."
 
-                    # --- START: MODIFICATION (Fire Notification) ---
                     notification_payload = {
                         "primary_account": account_name,
                         "subaccount_name": new_sub_name,
@@ -111,7 +108,6 @@ def create_subaccount():
                         "use_primary_balance": payload['use_primary_account_balance']
                     }
                     notification_service.fire_and_forget("subaccount.created", notification_payload)
-                    # --- END: MODIFICATION ---
 
                 except Exception as e:
                     result['message'] = (f"WARNING: Successfully created subaccount '{new_sub_name}' via Vonage API, "
@@ -305,10 +301,11 @@ def release_did():
             log_enabled=log_enabled
         )
 
-        # --- START: MODIFICATION (Fire Notification) ---
+        # --- START: MODIFICATION ---
         if status_code < 400:
             notification_payload = {
                 "account_name": creds.get('account_name'),
+                "subaccount_api_key": creds.get('api_key'),
                 "did": data.get('msisdn'),
                 "country": data.get('country')
             }
