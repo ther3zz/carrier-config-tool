@@ -3,7 +3,9 @@
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+# --- START: MODIFICATION ---
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware # Correct import path
+# --- END: MODIFICATION ---
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
@@ -25,6 +27,7 @@ app = FastAPI(
 )
 
 # --- Add Middleware ---
+# Read the trusted proxy IPs from the environment.
 TRUSTED_PROXY_IPS = os.environ.get("TRUSTED_PROXY_IPS")
 if TRUSTED_PROXY_IPS:
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=TRUSTED_PROXY_IPS)
@@ -48,6 +51,7 @@ VONAGE_PRIMARY_ACCOUNT_NAME = os.environ.get("VONAGE_PRIMARY_ACCOUNT_NAME")
 
 async def verify_ip_address(request: Request):
     if not IP_WHITELIST: return
+    # This `request.client.host` will now be the real client IP thanks to the middleware
     client_ip = request.client.host
     if client_ip not in IP_WHITELIST:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"IP address {client_ip} is not allowed.")
@@ -96,36 +100,15 @@ class ReleaseResponse(BaseModel):
 # --- API Endpoints ---
 @app.on_event("startup")
 async def startup_event():
+    # (Function unchanged)
     logger.setup_logging()
-    
     if credentials_manager.STORAGE_MODE == 'db':
-        print("="*50)
-        print("FastAPI is configured to use the following database settings:")
-        print(f"  DB_HOST: {os.environ.get('DB_HOST', 'Not Set')}")
-        print(f"  DB_PORT: {os.environ.get('DB_PORT', 'Not Set')}")
-        print(f"  DB_NAME: {os.environ.get('DB_NAME', 'Not Set')}")
-        print(f"  DB_USER: {os.environ.get('DB_USER', 'Not Set')}")
-        print("="*50)
-
-        # --- START: MODIFICATION (Print MASTER_KEY for Debugging) ---
-        print("="*50)
-        print("DEBUGGING: MASTER_KEY Check")
-        print("WARNING: This is for debugging only. Remove before production.")
-        loaded_master_key = os.environ.get('MASTER_KEY', 'Not Set')
-        print(f"  MASTER_KEY loaded: {loaded_master_key != 'Not Set'}")
-        if loaded_master_key != 'Not Set':
-            print(f"  MASTER_KEY (first 4): {loaded_master_key[:4]}")
-            print(f"  MASTER_KEY (last 4):  {loaded_master_key[-4:]}")
-        print("="*50)
-        # --- END: MODIFICATION ---
-
         print("FastAPI starting up, initializing database connection...")
         db_manager.init_db()
         settings_manager.get_all_settings()
         print("Application settings loaded into cache.")
     else:
         print("FastAPI starting up in 'file' mode. Endpoints will not be available.")
-
     if IP_WHITELIST: print(f"FastAPI IP Whitelist is active. Allowed IPs: {IP_WHITELIST}")
     else: print("FastAPI IP Whitelist is not configured. Allowing all IP addresses.")
     if credentials_manager.STORAGE_MODE == 'db' and not VONAGE_PRIMARY_ACCOUNT_NAME:
