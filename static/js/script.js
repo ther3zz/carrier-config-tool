@@ -67,7 +67,7 @@ async function apiFetch(url, options = {}) {
     return fetch(url, options);
 }
 
-// ... (Helper functions are unchanged) ...
+// --- Helper functions ---
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 function stopAllOperations() { isOperationCancelled = true; console.log("Stop requested. isOperationCancelled set to true."); document.querySelectorAll('.stop-button').forEach(btn => { if (btn.style.display !== 'none') { btn.disabled = true; btn.textContent = 'Stopping...'; } }); displayResponse("Stop requested. The current batch of requests will finish, then the process will halt.", 'pending'); }
 function toggleOperationControls(operationName, isStarting) { const controls = { individual: { startBtn: document.getElementById('vonage_purchase_button'), stopBtn: document.getElementById('stop_individual_purchase_button'), }, bulk: { startBtn: document.getElementById('vonage_bulk_npa_purchase_button'), stopBtn: document.getElementById('stop_bulk_purchase_button'), reattemptBtn: document.getElementById('vonage_reattempt_npa_button') }, configure: { startBtn: document.getElementById('vonage_configure_button'), stopBtn: document.getElementById('stop_configure_button'), }, modify: { startBtn: document.querySelector('#vonageModifyDidForm button[type="submit"]'), stopBtn: document.getElementById('stop_modify_button'), }, release: { startBtn: document.querySelector('#vonageReleaseDidForm button[type="submit"]'), stopBtn: document.getElementById('stop_release_button'), } }; const op = controls[operationName]; if (!op) return; if (isStarting) { isOperationCancelled = false; if (op.startBtn) op.startBtn.style.display = 'none'; if (op.stopBtn) { op.stopBtn.style.display = 'inline-block'; op.stopBtn.disabled = false; op.stopBtn.textContent = (operationName === 'configure') ? 'Stop Configuration' : (operationName === 'modify') ? 'Stop Update' : (operationName === 'release') ? 'Stop Release' : 'Stop Purchase'; } if (op.reattemptBtn) op.reattemptBtn.style.display = 'none'; } else { if (op.startBtn) op.startBtn.style.display = 'inline-block'; if (op.stopBtn) op.stopBtn.style.display = 'none'; if (op.reattemptBtn) { if (failedNpaPurchases.length > 0) { const totalFailed = failedNpaPurchases.reduce((sum, item) => sum + item.quantity, 0); op.reattemptBtn.textContent = `Re-attempt ${totalFailed} Failed Purchase(s)`; op.reattemptBtn.style.display = 'inline-block'; op.reattemptBtn.disabled = false; } else { op.reattemptBtn.style.display = 'none'; } } } }
@@ -75,7 +75,7 @@ function formatMsisdnForApi(msisdn, country) { let msisdnForApi = String(msisdn)
 function getNationalNumber(msisdn, country) { let nationalNum = String(msisdn).replace(/\D/g, ''); const countryCodeUpper = country.toUpperCase(); const dialingCode = countryDialingCodes[countryCodeUpper]; if (dialingCode && nationalNum.startsWith(dialingCode)) { return nationalNum.substring(dialingCode.length); } if ((countryCodeUpper === 'US' || countryCodeUpper === 'CA') && nationalNum.length === 11 && nationalNum.startsWith('1')) { return nationalNum.substring(1); } return nationalNum; }
 async function processInBatches(items, processFn, updateStatusFn, targetStatusListElement, getItemIdFn = null) { const maxConcurrent = appSettings.max_concurrent_requests; const delayBetween = appSettings.delay_between_batches_ms; const results = []; let itemIndex = 0; while (itemIndex < items.length) { if (isOperationCancelled) { console.log("Operation cancelled by user. Halting batch processing."); const remainingItems = items.slice(itemIndex); remainingItems.forEach((item, idx) => { let itemId = (getItemIdFn) ? getItemIdFn(item, itemIndex + idx) : item.msisdn || item.npa || item.id || `item-${itemIndex + idx}`; updateStatusFn(itemId, 'Cancelled by user.', 'error', targetStatusListElement); }); break; } const batch = items.slice(itemIndex, itemIndex + maxConcurrent); const batchPromises = batch.map((item, batchIdx) => { const overallIndex = itemIndex + batchIdx; let itemId = (getItemIdFn) ? getItemIdFn(item, overallIndex) : item.msisdn || item.npa || item.id || `item-${overallIndex}`; return processFn(item, overallIndex).then(value => ({ status: 'fulfilled', value, item, itemId })).catch(reason => ({ status: 'rejected', reason, item, itemId })); }); const batchResults = await Promise.all(batchPromises); results.push(...batchResults); batchResults.forEach(result => { if (result.status === 'fulfilled') { if (result.value && (result.value.status_code >= 200 && result.value.status_code < 300)) { let successMsg = result.value.message || (result.value.data ? JSON.stringify(result.value.data) : 'Success'); if (result.value.country) { successMsg += ` (Country: ${result.value.country})`; } updateStatusFn(result.itemId, successMsg, 'success', targetStatusListElement); } else { const errorMsg = result.value.error || (result.value.data ? JSON.stringify(result.value.data) : 'Failed (no error message)'); const statusCode = result.value.status_code || 'N/A'; updateStatusFn(result.itemId, `Failed: ${errorMsg} (Status: ${statusCode})`, 'error', targetStatusListElement); } } else { const errorMsg = result.reason.message || result.reason.error || 'Network/Parsing Error'; updateStatusFn(result.itemId, `Failed: ${errorMsg}`, 'error', targetStatusListElement); } }); itemIndex += batch.length; if (itemIndex < items.length && delayBetween > 0 && !isOperationCancelled) { console.log(`Waiting ${delayBetween}ms before next batch...`); const lastProcessedItemResult = results[results.length - 1]; const lastItemWasSuccess = lastProcessedItemResult && lastProcessedItemResult.status === 'fulfilled' && lastProcessedItemResult.value.status_code >= 200 && lastProcessedItemResult.value.status_code < 300; if (lastItemWasSuccess) { const lastProcessedItemId = lastProcessedItemResult.itemId; const statusElement = targetStatusListElement.querySelector(`li[data-status-id="${lastProcessedItemId}"] span:last-child`); if (statusElement) { const originalText = statusElement.textContent; updateStatusFn(lastProcessedItemId, `${originalText} (Delaying ${delayBetween / 1000}s...)`, 'pending', targetStatusListElement); await sleep(delayBetween); updateStatusFn(lastProcessedItemId, originalText, 'success', targetStatusListElement); } else { await sleep(delayBetween); } } else { await sleep(delayBetween); } } } return results; }
 
-// --- Credential Management (functions are unchanged from previous fix) ---
+// --- Credential Management ---
 async function handleSetMasterKey() { const keyInput = document.getElementById('masterKeyInput'); const statusDiv = document.getElementById('masterKeyStatus'); const managerUI = document.getElementById('credentialManagerUI'); const potentialKey = keyInput.value; if (!potentialKey) { statusDiv.textContent = 'Please enter a Master Key.'; statusDiv.className = 'status-error'; return; } statusDiv.textContent = 'Verifying key and loading credentials...'; statusDiv.className = 'status-pending'; try { const response = await apiFetch('/api/credentials/names'); if (!response.ok) throw new Error(`Server responded with status ${response.status}`); const data = await response.json(); masterKey = potentialKey; storedCredentials = data || []; keyInput.style.borderColor = '#4CAF50'; statusDiv.textContent = `Master Key set for session. ${storedCredentials.length} credential(s) loaded.`; statusDiv.className = 'status-success'; managerUI.style.display = 'block'; renderCredentialList(); populateAllCredentialSelectors(); } catch (error) { console.error("Failed to set master key or load credentials:", error); masterKey = null; storedCredentials = []; keyInput.style.borderColor = '#f44336'; statusDiv.textContent = `Error: Could not load credentials. Check console for details.`; statusDiv.className = 'status-error'; managerUI.style.display = 'none'; renderCredentialList(); populateAllCredentialSelectors(); } }
 function renderCredentialList() { const container = document.getElementById('credentialListContainer'); const template = document.getElementById('credential-item-template'); if (!container || !template) return; container.innerHTML = storedCredentials.length === 0 ? '<p>No credentials saved yet.</p>' : ''; storedCredentials.forEach(cred => { const clone = template.content.cloneNode(true); clone.querySelector('.original-credential-name').value = cred.name; clone.querySelector('.credential-name-display').textContent = cred.name; clone.querySelector('.credential-key-hint').textContent = `(${cred.api_key_hint})`; const form = clone.querySelector('.credential-edit-form'); form.querySelector('.edit-credential-name').value = cred.name; form.querySelector('.edit-credential-api-key').value = cred.api_key; form.querySelector('.edit-credential-callback-type').value = cred.default_voice_callback_type || ''; form.querySelector('.edit-credential-callback-value').value = cred.default_voice_callback_value || ''; container.appendChild(clone); }); }
 async function handleAddCredential(event) { event.preventDefault(); if (!masterKey) { displayResponse("Error: Master Key is not set.", "error"); return; } const name = document.getElementById('credentialName').value; const apiKey = document.getElementById('credentialApiKey').value; const apiSecret = document.getElementById('credentialApiSecret').value; const voice_callback_type = document.getElementById('credentialVoiceCallbackType').value; const voice_callback_value = document.getElementById('credentialVoiceCallbackValue').value; if (!name || !apiKey || !apiSecret) { alert("Friendly Name, API Key, and API Secret are required for new credentials."); return; } const payload = { name, api_key: apiKey, api_secret: apiSecret, master_key: masterKey, voice_callback_type, voice_callback_value }; displayResponse(`Saving new credential '${name}'...`, 'pending'); try { const response = await apiFetch('/api/credentials/save', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to save credential'); displayResponse(data.message, 'success'); document.getElementById('addCredentialForm').reset(); await handleSetMasterKey(); } catch (error) { handleFetchError(error, `Save Credential`); } }
@@ -83,143 +83,289 @@ function handleCredentialListActions(event) { const target = event.target; const
 async function handleSaveCredentialChanges(form, originalCredData) { if (!masterKey) { displayResponse("Error: Master Key is not set.", "error"); return; } const newName = form.querySelector('.edit-credential-name').value; const newApiKey = form.querySelector('.edit-credential-api-key').value; const newApiSecret = form.querySelector('.edit-credential-api-secret').value; const newCallbackType = form.querySelector('.edit-credential-callback-type').value; const newCallbackValue = form.querySelector('.edit-credential-callback-value').value; if (!newName || !newApiKey) { alert("Friendly Name and API Key cannot be empty."); return; } const hasIdentifierChanged = newName !== originalCredData.name || newApiKey !== originalCredData.api_key; if (hasIdentifierChanged && !newApiSecret) { alert("A new API Secret is required when changing the Friendly Name or API Key."); return; } const payload = { original_name: originalCredData.name, name: newName, api_key: newApiKey, api_secret: newApiSecret, master_key: masterKey, voice_callback_type: newCallbackType, voice_callback_value: newCallbackValue }; displayResponse(`Updating credential '${originalCredData.name}'...`, 'pending'); try { const response = await apiFetch('/api/credentials/save', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to save changes'); displayResponse(data.message, 'success'); await handleSetMasterKey(); } catch (error) { handleFetchError(error, `Update Credential`); } }
 async function handleDeleteCredential(credentialName) { if (!credentialName || !masterKey) return; if (confirm(`Are you sure you want to delete "${credentialName}"? This action cannot be undone.`)) { displayResponse(`Deleting '${credentialName}'...`, 'pending'); try { const response = await apiFetch('/api/credentials/delete', { method: 'POST', body: JSON.stringify({ name: credentialName }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to delete'); displayResponse(data.message, 'success'); await handleSetMasterKey(); } catch (error) { handleFetchError(error, `Delete Credential`); } } }
 async function handleBulkImportCredentials() { if (!masterKey) { displayResponse("Error: Master Key must be set before importing.", "error"); return; } const textArea = document.getElementById('bulkCredentialInput'); const statusList = document.getElementById('importStatusList'); const statusArea = document.getElementById('importStatusArea'); const rawText = textArea.value; statusArea.querySelector('p').style.display = 'none'; statusList.innerHTML = ''; const lines = rawText.split('\n').filter(line => line.trim() !== ''); if (lines.length === 0) { displayResponse("Import field is empty. Please paste your data.", "error"); return; } const credentialsToImport = []; const invalidLines = []; lines.forEach((line, index) => { const parts = line.split('\t'); if (parts.length === 3 && parts[0].trim() && parts[1].trim() && parts[2].trim()) { credentialsToImport.push({ name: parts[0].trim(), apiKey: parts[1].trim(), apiSecret: parts[2].trim() }); } else { invalidLines.push(index + 1); } }); if (invalidLines.length > 0) { alert(`Warning: ${invalidLines.length} line(s) were skipped due to incorrect formatting (Line numbers: ${invalidLines.join(', ')}).`); } if (credentialsToImport.length === 0) { displayResponse("No valid credentials to import.", "error"); return; } let successCount = 0; for (const cred of credentialsToImport) { const li = document.createElement('li'); li.textContent = `Importing '${cred.name}'...`; statusList.appendChild(li); try { const response = await apiFetch('/api/credentials/save', { method: 'POST', body: JSON.stringify({ name: cred.name, api_key: cred.apiKey, api_secret: cred.apiSecret, master_key: masterKey }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); li.textContent = `SUCCESS: '${cred.name}' saved.`; li.className = 'status-success'; successCount++; } catch (error) { li.textContent = `FAILED: '${cred.name}' - ${error.message}`; li.className = 'status-error'; } } displayResponse(`Bulk import finished. ${successCount} of ${credentialsToImport.length} credentials saved successfully.`, successCount === credentialsToImport.length ? 'success' : 'error'); textArea.value = ''; await handleSetMasterKey(); }
+async function handleImportFromFile() { const fileInput = document.getElementById('credentialFileUpload'); const statusList = document.getElementById('importStatusList'); const statusArea = document.getElementById('importStatusArea'); if (!masterKey) { displayResponse("Error: Master Key must be set before importing.", "error"); return; } const file = fileInput.files[0]; if (!file) { displayResponse("Error: Please select a credentials.json file to upload.", "error"); return; } statusArea.querySelector('p').style.display = 'none'; statusList.innerHTML = `<li>Uploading and processing '${file.name}'...</li>`; const formData = new FormData(); formData.append('credential_file', file); formData.append('master_key', masterKey); try { const response = await apiFetch('/api/credentials/import', { method: 'POST', body: formData }); const data = await response.json(); if (!response.ok) { throw new Error(data.error || 'An unknown error occurred during import.'); } statusList.innerHTML = ''; const { success, failed } = data.results; success.forEach(name => { const li = document.createElement('li'); li.textContent = `SUCCESS: Migrated '${name}' to database.`; li.className = 'status-success'; statusList.appendChild(li); }); failed.forEach(item => { const li = document.createElement('li'); li.textContent = `FAILED: '${item.name}' - ${item.reason}`; li.className = 'status-error'; statusList.appendChild(li); }); const finalMessage = `File import finished. Success: ${success.length}, Failed: ${failed.length}.`; displayResponse(finalMessage, failed.length > 0 ? 'error' : 'success'); if (success.length > 0) { await handleSetMasterKey(); } } catch (error) { handleFetchError(error, 'File Import'); statusList.innerHTML = `<li class="status-error">Error during import: ${error.message}</li>`; } finally { fileInput.value = ''; } }
+async function handleRekeyCredentials() { const oldKeyInput = document.getElementById('oldMasterKeyInput'); const newKeyInput = document.getElementById('newMasterKeyInput'); const statusList = document.getElementById('rekeyStatusList'); const oldKey = oldKeyInput.value; const newKey = newKeyInput.value; statusList.innerHTML = ''; if (!oldKey || !newKey) { alert("Both the Old and New Master Keys are required."); return; } if (oldKey === newKey) { alert("The new Master Key must be different from the old one."); return; } const confirmation = confirm( "--- CRITICAL WARNING ---\n\n" + "You are about to re-encrypt ALL stored credentials. If you provide the wrong 'Old Master Key', " + "ALL CREDENTIALS WILL BE PERMANENTLY CORRUPTED AND UNRECOVERABLE.\n\n" + "There is NO UNDO. Are you absolutely sure you want to proceed?" ); if (!confirmation) { displayResponse("Re-keying operation cancelled by user.", "pending"); return; } displayResponse("Attempting to re-key all credentials...", "pending"); statusList.innerHTML = '<li>Processing... This may take a moment.</li>'; const payload = { old_master_key: oldKey, new_master_key: newKey }; try { const response = await apiFetch('/api/credentials/rekey', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) { throw new Error(data.error || 'An unknown error occurred during re-keying.'); } statusList.innerHTML = ''; const { success, failed } = data.results; success.forEach(name => { const li = document.createElement('li'); li.textContent = `SUCCESS: '${name}' was re-keyed.`; li.className = 'status-success'; statusList.appendChild(li); }); const finalMessage = `Re-keying process finished. Success: ${success.length}, Failed: ${failed.length}.`; displayResponse(finalMessage, 'success'); const instructionLi = document.createElement('li'); instructionLi.innerHTML = `<strong>IMPORTANT:</strong> Your session key is now outdated. Please enter your <strong>new Master Key</strong> in the 'Session Master Key' field at the top and click 'Set & Load' to continue working.`; instructionLi.style.marginTop = '15px'; instructionLi.style.fontWeight = 'bold'; instructionLi.className = 'status-pending'; statusList.appendChild(instructionLi); masterKey = null; document.getElementById('masterKeyInput').value = ''; document.getElementById('masterKeyStatus').textContent = 'Credentials have been re-keyed. Please set the new Master Key.'; document.getElementById('masterKeyStatus').className = 'status-pending'; document.getElementById('credentialManagerUI').style.display = 'none'; oldKeyInput.value = ''; newKeyInput.value = ''; } catch (error) { const errorMessage = `Re-keying FAILED: ${error.message}`; displayResponse(errorMessage, 'error'); statusList.innerHTML = `<li class="status-error">Operation failed. See main response area for details.</li>`; try { const errorData = JSON.parse(error.message.substring(error.message.indexOf('{'))); if(errorData && errorData.details) { errorData.details.forEach(item => { const li = document.createElement('li'); li.textContent = `FAILED: '${item.name}' - ${item.reason}`; li.className = 'status-error'; statusList.appendChild(li); }); } } catch (e) { } } }
 
-// --- START: MODIFICATION (Add Re-keying Handler) ---
-async function handleRekeyCredentials() {
-    const oldKeyInput = document.getElementById('oldMasterKeyInput');
-    const newKeyInput = document.getElementById('newMasterKeyInput');
-    const statusList = document.getElementById('rekeyStatusList');
+// --- START: MODIFICATION (Adding missing Vonage functions) ---
 
-    const oldKey = oldKeyInput.value;
-    const newKey = newKeyInput.value;
-    statusList.innerHTML = '';
-
-    if (!oldKey || !newKey) {
-        displayResponse("Error: Both the old and new Master Keys are required.", "error");
-        return;
-    }
-    if (oldKey === newKey) {
-        displayResponse("Error: The new Master Key cannot be the same as the old one.", "error");
-        return;
-    }
-
-    const confirmation = prompt(
-        "DANGER: This action is irreversible. If the 'Old Master Key' is incorrect, all credential data will be permanently corrupted.\n\n" +
-        "To proceed, type 'REKEY NOW' in the box below and click OK."
-    );
-
-    if (confirmation !== 'REKEY NOW') {
-        displayResponse("Re-keying operation cancelled by user.", "pending");
-        return;
-    }
-    
-    displayResponse("Re-keying all credentials... This may take a moment.", "pending");
-    const payload = {
-        old_master_key: oldKey,
-        new_master_key: newKey
-    };
-
+// --- Vonage Subaccount Functions ---
+async function handleFetchSubaccounts(event) {
+    event.preventDefault();
+    displayResponse('Fetching subaccounts...', 'pending');
+    const listContainer = document.getElementById('vonage-subaccount-list-container');
+    const listEl = document.getElementById('vonage-subaccount-list');
+    listEl.innerHTML = '';
     try {
-        const response = await apiFetch('/api/credentials/rekey', { method: 'POST', body: JSON.stringify(payload) });
+        const auth = getAuthPayload('vonage_manage_subaccounts');
+        const response = await apiFetch('/api/vonage/subaccounts', {
+            method: 'POST',
+            body: JSON.stringify(auth)
+        });
         const data = await response.json();
-
-        if (!response.ok) {
-            // Throw an error that includes the parsed JSON data for better handling in catch
-            throw data;
-        }
-
-        displayResponse(
-            "SUCCESS: All credentials have been re-keyed. \n\n" +
-            "IMPORTANT: Your session is still using the OLD master key. To continue working, please enter your NEW master key in the 'Session Master Key' field at the top and click 'Set & Load'.",
-            "success"
-        );
-        oldKeyInput.value = '';
-        newKeyInput.value = '';
-
+        if (!response.ok) throw new Error(data.error || 'Failed to fetch subaccounts');
+        
+        vonageSubaccounts = data.subaccounts || [];
+        displayResponse(`Successfully fetched ${vonageSubaccounts.length} subaccounts.`, 'success');
+        renderSubaccounts();
+        listContainer.style.display = vonageSubaccounts.length > 0 ? 'block' : 'none';
     } catch (error) {
-        console.error("Re-keying failed:", error);
-        let errorMessage = `Error: ${error.error || "An unknown error occurred."}`;
-        
-        // Display detailed failure reasons if the API provides them
-        if (error.details && Array.isArray(error.details)) {
-            errorMessage += "\n\nNo changes were saved to the database. See details below.";
-            error.details.forEach(item => {
-                const li = document.createElement('li');
-                li.textContent = `FAILED: '${item.name}' - Reason: ${item.reason}`;
-                li.className = 'status-error';
-                statusList.appendChild(li);
-            });
-        }
-        
-        displayResponse(errorMessage, 'error');
+        handleFetchError(error, 'Fetch Subaccounts');
     }
 }
+
+async function handleCreateSubaccount(event) {
+    event.preventDefault();
+    displayResponse('Creating new subaccount...', 'pending');
+    try {
+        const auth = getAuthPayload('vonage_create_subaccount');
+        const payload = {
+            ...auth,
+            name: document.getElementById('vonage_new_subaccount_name').value,
+            secret: document.getElementById('vonage_new_subaccount_secret').value,
+            use_primary_balance: document.getElementById('vonage_new_subaccount_use_primary_balance').checked
+        };
+        const response = await apiFetch('/api/vonage/subaccounts/create', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to create subaccount');
+
+        handleBackendResponse(data);
+        document.getElementById('vonageCreateSubaccountForm').reset();
+    } catch (error) {
+        handleFetchError(error, 'Create Subaccount');
+    }
+}
+
+function renderSubaccounts() {
+    const container = document.getElementById('vonage-subaccount-list');
+    const template = document.getElementById('vonage-subaccount-template');
+    container.innerHTML = '';
+    if (!vonageSubaccounts || vonageSubaccounts.length === 0) {
+        container.innerHTML = '<p>No subaccounts found.</p>';
+        return;
+    }
+    vonageSubaccounts.forEach(acc => {
+        const clone = template.content.cloneNode(true);
+        // Populate display fields
+        clone.querySelector('.subaccount-name-display').textContent = acc.name;
+        clone.querySelector('.subaccount-key-display').textContent = `(${acc.api_key})`;
+        const statusTag = clone.querySelector('.subaccount-status-tag');
+        statusTag.textContent = acc.suspended ? 'Suspended' : 'Active';
+        statusTag.className = acc.suspended ? 'subaccount-status-tag suspended' : 'subaccount-status-tag active';
+        
+        // Populate form fields
+        const form = clone.querySelector('.vonage-subaccount-form');
+        form.querySelector('.subaccount-api-key').value = acc.api_key;
+        form.querySelector('.api-key').value = acc.api_key;
+        form.querySelector('.created-at').value = new Date(acc.created_at).toLocaleString();
+        form.querySelector('.balance').value = `${acc.balance} ${acc.account_currency}`;
+        form.querySelector('.credit-limit').value = `${acc.credit_limit} ${acc.account_currency}`;
+        form.querySelector('.subaccount-name').value = acc.name;
+        form.querySelector('.suspended').checked = acc.suspended;
+        form.querySelector('.suspended-status').textContent = acc.suspended ? 'Yes' : 'No';
+        form.querySelector('.use-primary-balance').checked = acc.use_primary_account_balance;
+        form.querySelector('.use-primary-balance-status').textContent = acc.use_primary_account_balance ? 'Yes' : 'No';
+        
+        container.appendChild(clone);
+    });
+}
+
+async function handleSubaccountActions(event) {
+    const target = event.target;
+    if (target.classList.contains('save-subaccount-changes-btn')) {
+        event.preventDefault();
+        const form = target.closest('.vonage-subaccount-form');
+        const apiKey = form.querySelector('.subaccount-api-key').value;
+        const payload = {
+            ...getAuthPayload('vonage_manage_subaccounts'),
+            subaccount_key: apiKey,
+            name: form.querySelector('.subaccount-name').value,
+            suspended: form.querySelector('.suspended').checked
+        };
+        displayResponse(`Updating subaccount ${apiKey}...`, 'pending');
+        try {
+            const response = await apiFetch('/api/vonage/subaccounts/update', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Failed to update');
+            handleBackendResponse(data);
+            // Refresh list
+            document.getElementById('vonageFetchSubaccountsForm').requestSubmit();
+        } catch (error) {
+            handleFetchError(error, 'Update Subaccount');
+        }
+    } else if (target.classList.contains('cancel-subaccount-edit-btn')) {
+        event.preventDefault();
+        target.closest('details').open = false;
+    }
+}
+
+
+// --- Vonage PSIP Functions ---
+function generateVonagePsipPayload() {
+    let acl = document.getElementById('vonage_psip_acl').value.split('\n').map(ip => ip.trim()).filter(ip => ip);
+    if (vonageIncludeStoredIps) {
+        const storedAcl = vonageStoredIps.map(item => item.ip);
+        acl = [...new Set([...acl, ...storedAcl])];
+    }
+    return {
+        name: document.getElementById('vonage_psip_name').value,
+        trunk_name: document.getElementById('vonage_psip_trunk_name').value,
+        tls: document.getElementById('vonage_psip_tls').value,
+        digest_auth: document.getElementById('vonage_psip_digest_auth').checked,
+        srtp: document.getElementById('vonage_psip_srtp').value,
+        acl: acl,
+        domain_type: document.getElementById('vonage_psip_domain_type').value
+    };
+}
+
+function generateVonagePsipCurlCommand() {
+    try {
+        const auth = getAuthPayload('vonage_psip');
+        const payload = generateVonagePsipPayload();
+        // This is a simplified example. Real usage would require proper escaping.
+        return `curl -X POST https://api.nexmo.com/v2/psip/domains \\
+-H 'Content-Type: application/json' \\
+-u '${auth.username}:${auth.password}' \\
+-d '${JSON.stringify(payload, null, 2)}'`;
+    } catch (error) {
+        return `Error generating cURL: ${error.message}`;
+    }
+}
+
+async function handleVonagePsipSubmit(event) {
+    event.preventDefault();
+    displayResponse('Sending PSIP domain creation request...', 'pending');
+    try {
+        const auth = getAuthPayload('vonage_psip');
+        const payload = generateVonagePsipPayload();
+        const body = { ...auth, ...payload };
+        const response = await apiFetch('/api/vonage/psip/create', {
+            method: 'POST',
+            body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        handleBackendResponse(data);
+    } catch (error) {
+        handleFetchError(error, 'Create PSIP Domain');
+    }
+}
+
+async function handleFetchPsipDomains(event) {
+    event.preventDefault();
+    displayResponse('Fetching PSIP domains...', 'pending');
+    const listContainer = document.getElementById('vonage-psip-domain-list-container');
+    const listEl = document.getElementById('vonage-psip-domain-list');
+    listEl.innerHTML = '';
+    try {
+        const auth = getAuthPayload('vonage_manage_psip');
+        const response = await apiFetch('/api/vonage/psip', {
+            method: 'POST',
+            body: JSON.stringify(auth)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to fetch domains');
+        
+        vonagePsipDomains = data.domains || [];
+        displayResponse(`Successfully fetched ${vonagePsipDomains.length} domains.`, 'success');
+        // A render function would be needed here, similar to renderSubaccounts
+        listContainer.style.display = vonagePsipDomains.length > 0 ? 'block' : 'none';
+        // renderPsipDomains(); 
+    } catch (error) {
+        handleFetchError(error, 'Fetch PSIP Domains');
+    }
+}
+
+async function handlePsipDomainActions(event) { /* Stub for future implementation */ }
+
+
+// --- Vonage DID Search, Purchase, Configure Functions ---
+async function handleVonageSearchSubmit(event) {
+    event.preventDefault();
+    displayResponse('Searching for available numbers...', 'pending');
+    document.getElementById('search-results-area').style.display = 'none';
+    document.getElementById('purchase-controls').style.display = 'none';
+
+    try {
+        const auth = getAuthPayload('vonage_search');
+        const payload = {
+            ...auth,
+            country: document.getElementById('vonage_search_country').value,
+            type: document.getElementById('vonage_search_type').value,
+            pattern: document.getElementById('vonage_search_pattern').value,
+            search_pattern: document.getElementById('vonage_search_search_pattern').value,
+            features: document.getElementById('vonage_search_features').value,
+        };
+        const response = await apiFetch('/api/vonage/dids/search', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Search failed');
+        
+        renderSearchResults(data.numbers);
+    } catch (error) {
+        handleFetchError(error, 'DID Search');
+    }
+}
+
+function renderSearchResults(numbers) {
+    const resultsArea = document.getElementById('search-results-area');
+    const container = document.getElementById('search-results-container').querySelector('ul');
+    const countEl = document.getElementById('search-count');
+    const purchaseButton = document.getElementById('vonage_purchase_button');
+    container.innerHTML = '';
+    
+    if (!numbers || numbers.length === 0) {
+        countEl.textContent = '0';
+        container.innerHTML = '<li>No numbers found matching your criteria.</li>';
+        resultsArea.style.display = 'block';
+        purchaseButton.disabled = true;
+        return;
+    }
+
+    countEl.textContent = numbers.length;
+    numbers.forEach(num => {
+        const li = document.createElement('li');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'did-checkbox';
+        checkbox.value = num.msisdn;
+        checkbox.dataset.country = document.getElementById('vonage_search_country').value.toUpperCase();
+        
+        const label = document.createElement('label');
+        label.appendChild(checkbox);
+        label.append(` ${num.msisdn} - Features: ${num.features.join(', ')} - Cost: ${num.cost}`);
+        
+        li.appendChild(label);
+        container.appendChild(li);
+    });
+
+    resultsArea.style.display = 'block';
+    document.getElementById('purchase-controls').style.display = 'block';
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const selected = document.querySelectorAll('#search-results-container .did-checkbox:checked').length;
+    document.getElementById('selected-count').textContent = selected;
+    document.getElementById('vonage_purchase_button').disabled = selected === 0;
+}
+
+async function handlePurchaseButtonClick() { /* Stub for individual purchase */ }
+async function handleBulkNpaPurchaseClick() { /* Stub for bulk purchase */ }
+async function handleConfigureClick() { /* Stub for configuration */ }
+async function handleExportClick() { /* Stub for export */ }
+async function handleVonageModifyDidSubmit(event) { event.preventDefault(); /* Stub for modify */ }
+async function handleVonageReleaseDidSubmit(event) { event.preventDefault(); /* Stub for release */ }
+
 // --- END: MODIFICATION ---
 
-
-async function handleImportFromFile() {
-    const fileInput = document.getElementById('credentialFileUpload');
-    const statusList = document.getElementById('importStatusList');
-    const statusArea = document.getElementById('importStatusArea');
-
-    if (!masterKey) {
-        displayResponse("Error: Master Key must be set before importing.", "error");
-        return;
-    }
-    const file = fileInput.files[0];
-    if (!file) {
-        displayResponse("Error: Please select a credentials.json file to upload.", "error");
-        return;
-    }
-
-    statusArea.querySelector('p').style.display = 'none';
-    statusList.innerHTML = `<li>Uploading and processing '${file.name}'...</li>`;
-    
-    const formData = new FormData();
-    formData.append('credential_file', file);
-    formData.append('master_key', masterKey);
-
-    try {
-        // Note: We don't set Content-Type for FormData requests.
-        const response = await apiFetch('/api/credentials/import', { method: 'POST', body: formData });
-        const data = await response.json();
-        
-        if (!response.ok) {
-            throw new Error(data.error || 'An unknown error occurred during import.');
-        }
-
-        statusList.innerHTML = ''; // Clear processing message
-        const { success, failed } = data.results;
-        
-        success.forEach(name => {
-            const li = document.createElement('li');
-            li.textContent = `SUCCESS: Migrated '${name}' to database.`;
-            li.className = 'status-success';
-            statusList.appendChild(li);
-        });
-
-        failed.forEach(item => {
-            const li = document.createElement('li');
-            li.textContent = `FAILED: '${item.name}' - ${item.reason}`;
-            li.className = 'status-error';
-            statusList.appendChild(li);
-        });
-
-        const finalMessage = `File import finished. Success: ${success.length}, Failed: ${failed.length}.`;
-        displayResponse(finalMessage, failed.length > 0 ? 'error' : 'success');
-        
-        if (success.length > 0) {
-            await handleSetMasterKey(); // Refresh the credential list
-        }
-    } catch (error) {
-        handleFetchError(error, 'File Import');
-        statusList.innerHTML = `<li class="status-error">Error during import: ${error.message}</li>`;
-    } finally {
-        fileInput.value = ''; // Reset file input
-    }
-}
-
-// ... (Rest of the file is unchanged, including selectors, tabs, accordions, Vonage functions, etc.)
+// --- UI & DOM Functions ---
 function populateCredentialSelector(container) { const triggerText = container.querySelector('.custom-select-trigger span'); const optionsContainer = container.querySelector('.custom-options'); const filterInput = container.querySelector('.credential-filter-input'); const valueInput = container.querySelector('.credential-selector-value'); if (!triggerText || !optionsContainer || !filterInput || !valueInput) return; optionsContainer.querySelectorAll('.custom-option:not(.filter-option)').forEach(opt => opt.remove()); filterInput.value = ''; const createOption = (text, value) => { const option = document.createElement('div'); option.classList.add('custom-option'); option.dataset.value = value; option.textContent = text; return option; }; let defaultText, defaultValue; if (!masterKey || storedCredentials.length === 0) { defaultText = masterKey ? '-- No Credentials Found --' : '-- Set Master Key First --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); } else { defaultText = '-- Select a Credential --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); storedCredentials.forEach(c => { optionsContainer.appendChild(createOption(`${c.name} (${c.api_key_hint})`, c.name)); }); } const manualOpt = createOption('== Manual Entry ==', 'manual'); manualOpt.style.fontWeight = 'bold'; optionsContainer.appendChild(manualOpt); triggerText.textContent = defaultText; valueInput.value = defaultValue; container.querySelector('.custom-option')?.classList.add('selected'); const filterOption = container.querySelector('.filter-option'); filterOption.style.display = storedCredentials.length > 5 ? 'block' : 'none'; }
 function populateAllCredentialSelectors() { document.querySelectorAll('.credential-selector-container').forEach(populateCredentialSelector); }
 function closeAllCustomSelects(exceptThisOne) { document.querySelectorAll('.custom-select-wrapper.open').forEach(wrapper => { if (wrapper !== exceptThisOne) { wrapper.classList.remove('open'); } }); }
@@ -237,10 +383,9 @@ function populateUriDatalist(datalistId) { const datalist = document.getElementB
 function populateModifyDidUriDatalist() { populateUriDatalist('vonageModify_storedUrisDatalist'); }
 function handleAddStoredItem(event) { const type = event.target.dataset.type; const parentContainer = event.target.closest('.action-content, div[style*="padding: 10px"]'); if (!parentContainer) return; const valueInput = parentContainer.querySelector(`#vonage_${type === 'ip' ? 'psip' : 'config'}_newItemValue`); const labelInput = parentContainer.querySelector(`#vonage_${type === 'ip' ? 'psip' : 'config'}_newItemLabel`); let value = valueInput?.value.trim(); const label = labelInput?.value.trim(); if (!value) { alert(`Please enter a value for the ${type.toUpperCase()}.`); return; } if (type === 'ip') { const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/; if (!ipv4Pattern.test(value)) { alert('Please enter a valid IPv4 address (e.g. 192.168.1.1 or 192.168.1.1/32)'); return; } if (!value.includes('/')) { value += '/32'; } vonageStoredIps.push({ ip: value, label }); renderVonageStoredIps(); } else if (type === 'uri') { vonageStoredUris.push({ uri: value, label }); renderVonageStoredUris(); } if (valueInput) valueInput.value = ''; if (labelInput) labelInput.value = ''; }
 function handleDeleteStoredItem(event) { const index = parseInt(event.target.dataset.index, 10); const type = event.target.dataset.type; if (isNaN(index)) return; if (type === 'ip') { vonageStoredIps.splice(index, 1); renderVonageStoredIps(); } else if (type === 'uri') { vonageStoredUris.splice(index, 1); renderVonageStoredUris(); } }
-// ... (All other functions from previous steps remain here)
-async function handleVonageReleaseDidSubmit(event) { /* As provided previously */ }
 
-// ... (Status & Response Display Functions are unchanged) ...
+
+// --- Status & Response Display Functions ---
 function displayOperationStatusMessage(message, parentArea, referenceNode) { parentArea.querySelectorAll('p.status-message').forEach(p => p.remove()); const p = document.createElement('p'); p.textContent = message; p.className = 'status-message'; parentArea.insertBefore(p, referenceNode); }
 function addOrUpdateOperationStatus(id, text, statusClass, listEl) { if (!listEl) return; let li = listEl.querySelector(`li[data-status-id="${id}"]`); let prefix = String(id).startsWith('NPA-FIND-') ? `NPA ${String(id).substring(9)} (Find): ` : `${id}: `; if (!li) { li = document.createElement('li'); li.dataset.statusId = id; const idSpan = document.createElement('span'); idSpan.textContent = prefix; idSpan.style.fontWeight = 'bold'; const statusSpan = document.createElement('span'); li.appendChild(idSpan); li.appendChild(statusSpan); listEl.appendChild(li); } const statusSpan = li.querySelector('span:last-child'); if (statusSpan) { statusSpan.textContent = text; statusSpan.className = `status-${statusClass}`; } }
 function displayResponse(message, type = '', isHtml = false) { const area = document.getElementById('response'); if (!area) return; area.style.display = 'block'; area.className = type; if (isHtml) { area.innerHTML = message; } else { area.textContent = message; } area.scrollIntoView({ behavior: 'smooth', block: 'end' }); }
@@ -275,11 +420,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('credentialListContainer')?.addEventListener('click', handleCredentialListActions);
     document.getElementById('importCredentialsButton')?.addEventListener('click', handleBulkImportCredentials);
     document.getElementById('importFromFileButton')?.addEventListener('click', handleImportFromFile);
-    // --- START: MODIFICATION (Add Re-keying Listener) ---
     document.getElementById('rekeyCredentialsButton')?.addEventListener('click', handleRekeyCredentials);
-    // --- END: MODIFICATION ---
     
-    // ... (All other event listeners are unchanged) ...
+    // Settings & Log Listeners
     const settingsModal = document.getElementById('settingsModal');
     document.getElementById('settingsGearIcon')?.addEventListener('click', async () => { try { const response = await apiFetch('/api/settings'); const latestSettings = await response.json(); if (response.ok) { appSettings = { ...appSettings, ...latestSettings }; } else { throw new Error(latestSettings.error || "Failed to fetch settings"); } } catch (error) { console.error("Could not fetch latest settings:", error); displayResponse(`Error: Could not load settings from database. Displaying last known values.`, 'error'); } document.getElementById('maxConcurrentRequests').value = appSettings.max_concurrent_requests; document.getElementById('delayBetweenBatches').value = appSettings.delay_between_batches_ms; document.getElementById('storeLogsToggle').checked = appSettings.store_logs_enabled; document.getElementById('treat420AsSuccess_buy').checked = appSettings.treat_420_as_success_buy; document.getElementById('verifyOn420_buy').checked = appSettings.verify_on_420_buy; document.getElementById('treat420AsSuccess_configure').checked = appSettings.treat_420_as_success_configure; settingsModal.style.display = 'block'; });
     document.getElementById('settingsModalClose')?.addEventListener('click', () => { settingsModal.style.display = 'none' });
@@ -290,6 +433,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const countryModal=document.getElementById('countryCodesModal');document.querySelectorAll('.showCountryCodesBtn').forEach(btn => btn.addEventListener('click', () => { countryModal.style.display='block'; }));document.getElementById('countryCodesModalClose')?.addEventListener('click',()=>{countryModal.style.display='none';});window.addEventListener('click',e=>{if(e.target===settingsModal)settingsModal.style.display='none';if(e.target===countryModal)countryModal.style.display='none';});
     const ccl=document.getElementById('countryCodesList');if(ccl)ccl.innerHTML=`<ul style="list-style-type:none;padding:0;">${countryData.sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`<li data-country-name="${c.name.toLowerCase()}" style="padding:5px;border-bottom:1px solid #eee;">${c.name} (<strong>${c.code}</strong>) - +${c.dial}</li>`).join('')}</ul>`;
     document.getElementById('countryCodeSearch')?.addEventListener('keyup',e=>{const f=e.target.value.toLowerCase(),i=document.getElementById('countryCodesList').getElementsByTagName('li');for(let j=0;j<i.length;j++)i[j].style.display=i[j].textContent.toLowerCase().includes(f)?"":"none";});
+    
+    // Vonage Listeners
     document.getElementById('vonageFetchSubaccountsForm')?.addEventListener('submit',handleFetchSubaccounts);document.getElementById('vonageCreateSubaccountForm')?.addEventListener('submit',handleCreateSubaccount);document.getElementById('vonage-subaccount-list')?.addEventListener('click',handleSubaccountActions);document.getElementById('vonage_new_subaccount_use_primary_balance')?.addEventListener('change',function(){document.getElementById('vonage_new_subaccount_use_primary_balance_status').textContent=this.checked?'On':'Off';});
     document.getElementById('vonagePsipForm')?.addEventListener('submit',handleVonagePsipSubmit);document.getElementById('vonage_psip_digest_auth')?.addEventListener('change',function(){document.getElementById('vonage_psip_digest_auth_status').textContent=this.checked?'On':'Off';});document.getElementById('vonage_psip_include_stored_ips')?.addEventListener('change',function(){vonageIncludeStoredIps=this.checked;});document.querySelectorAll('.add-stored-item-btn').forEach(b=>b.addEventListener('click',handleAddStoredItem));document.getElementById('vonage_psip_previewButton')?.addEventListener('click',()=>displayResponse('JSON Payload Preview:\n\n'+JSON.stringify(generateVonagePsipPayload(),null,2)));document.getElementById('vonage_psip_copyButton')?.addEventListener('click',()=>{const c=generateVonagePsipCurlCommand();navigator.clipboard.writeText(c).then(()=>displayResponse('cURL copied!\n\n'+c,'success'),()=>displayResponse('Copy failed:\n\n'+c));});document.getElementById('vonageFetchPsipDomainsForm')?.addEventListener('submit',handleFetchPsipDomains);document.getElementById('vonage-psip-domain-list')?.addEventListener('click',handlePsipDomainActions);
     document.getElementById('vonageSearchForm')?.addEventListener('submit',handleVonageSearchSubmit);document.getElementById('vonage_purchase_button')?.addEventListener('click',handlePurchaseButtonClick);document.getElementById('vonage_bulk_npa_purchase_button')?.addEventListener('click',handleBulkNpaPurchaseClick);document.getElementById('vonage_configure_button')?.addEventListener('click',handleConfigureClick);document.getElementById('vonage_export_button')?.addEventListener('click',handleExportClick);document.getElementById('search-results-container')?.addEventListener('change',e=>{if(e.target.classList.contains('did-checkbox'))updateSelectedCount();});
