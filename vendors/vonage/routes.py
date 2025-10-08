@@ -1,135 +1,216 @@
 # --- START OF FILE vendors/vonage/routes.py ---
 
-import os
 from flask import Blueprint, request, jsonify
-from . import client # Import client functions from the same package
 from utils import credentials_manager
-from utils.config_loader import load_config_file
 from utils import settings_manager
+from . import client as vonage_client
 
+# Create a Blueprint for all Vonage-related API routes that the UI will call
 vonage_bp = Blueprint('vonage', __name__, url_prefix='/api/vonage')
 
-# Define path to config file
-NPA_DATA_CONFIG_FILE = os.path.join('config', 'npa_data.json')
-
-# --- Credentials Helper Function (Unchanged) ---
-def _get_credentials_from_request(data: dict, use_primary_keys: bool = False) -> (dict, tuple):
-    """
-    Helper to extract credentials from a request payload. It now handles cases
-    where the function needs 'primary_api_key' instead of 'username'/'api_key'.
-    """
-    account_name = data.get('account_name')
+def _get_credentials_from_request(data: dict):
+    """Helper to consistently extract and decrypt credentials from a request payload."""
     master_key = data.get('master_key')
-
-    key_name = 'primary_api_key' if use_primary_keys else 'api_key'
-    secret_name = 'primary_api_secret' if use_primary_keys else 'api_secret'
-
-    if account_name and master_key:
-        try:
-            creds = credentials_manager.get_decrypted_credentials(account_name, master_key)
-            return {key_name: creds['api_key'], secret_name: creds['api_secret']}, None
-        except ValueError as e:
-            return None, ({"error": str(e)}, 401)
-
-    username = data.get('username') or data.get('primary_api_key')
-    password = data.get('password') or data.get('primary_api_secret')
-
-    if username and password:
-        return {key_name: username, secret_name: password}, None
-
-    error_msg = "Missing credentials. Please provide 'account_name' and 'master_key', or the appropriate API key and secret."
-    return None, ({"error": error_msg}, 400)
-
-
-# --- Subaccount Management, PSIP, and other DID Routes are unchanged ---
-@vonage_bp.route('/subaccounts/list', methods=['POST'])
-def handle_vonage_list_subaccounts():
-    log_enabled = settings_manager.get_setting('store_logs_enabled')
-    data = request.get_json()
-    if not data: return jsonify({"error": "Invalid JSON payload"}), 400
-
-    credentials, error = _get_credentials_from_request(data, use_primary_keys=True)
-    if error: return jsonify(error[0]), error[1]
-
-    result_data, status_code = client.list_subaccounts(credentials['primary_api_key'], credentials['primary_api_secret'], log_enabled=log_enabled)
-    response_body = {"status_code": status_code, "data": result_data}
-    if status_code >= 400: response_body = {"status_code": status_code, **result_data}
-    return jsonify(response_body), status_code
-
-# ... (all other existing endpoints remain the same) ...
-
-@vonage_bp.route('/update_did', methods=['POST'])
-def handle_vonage_update_did():
-    log_enabled = settings_manager.get_setting('store_logs_enabled')
-    treat_420_as_success = settings_manager.get_setting('treat_420_as_success_configure')
-    data = request.get_json()
-    if not data: return jsonify({"error": "Invalid JSON payload"}), 400
-    country = data.get('country')
-    msisdn = data.get('msisdn')
-    if not country or not msisdn: return jsonify({"error": "Missing 'country' or 'msisdn' for update", "msisdn": msisdn}), 400
-    credentials, error = _get_credentials_from_request(data)
-    if error: return jsonify(error[0]), error[1]
-    config = data.get('config', {})
-    result_data, status_code = client.update_did(credentials['api_key'], credentials['api_secret'], country, msisdn, config, log_enabled=log_enabled, treat_420_as_success=treat_420_as_success)
-    response_body = {"status_code": status_code, **result_data}
-    return jsonify(response_body), status_code
-
-# --- START: MODIFICATION (Add Cancel DID Endpoint for UI) ---
-@vonage_bp.route('/cancel_did', methods=['POST'])
-def handle_vonage_cancel_did():
-    """
-    Endpoint for the UI to cancel a single DID. This is called in a loop by the frontend.
-    """
-    log_enabled = settings_manager.get_setting('store_logs_enabled')
+    account_name = data.get('account_name')
     
+    if not master_key or not account_name:
+        raise ValueError("Master Key and Account Name are required.")
+        
+    # Use the master key to get the decrypted API key and secret
+    return credentials_manager.get_decrypted_credentials(account_name, master_key)
+
+
+# --- Subaccount Management Endpoints ---
+
+@vonage_bp.route('/subaccounts', methods=['POST'])
+def get_subaccounts():
     data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON payload"}), 400
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        
+        result, status_code = vonage_client.get_subaccounts(
+            primary_api_key=creds['api_key'],
+            primary_api_secret=creds['api_secret'],
+            log_enabled=log_enabled
+        )
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
-    country = data.get('country')
-    msisdn = data.get('msisdn')
-    if not country or not msisdn:
-        return jsonify({"error": "Missing 'country' or 'msisdn' for cancellation", "msisdn": msisdn}), 400
-
-    # Get credentials for this specific request
-    credentials, error = _get_credentials_from_request(data)
-    if error:
-        return jsonify(error[0]), error[1]
-
-    # Call the client function to cancel the single DID
-    result_data, status_code = client.cancel_did(
-        credentials['api_key'], 
-        credentials['api_secret'], 
-        country, 
-        msisdn,
-        log_enabled=log_enabled
-    )
-
-    response_body = {"status_code": status_code, **result_data}
-    return jsonify(response_body), status_code
-# --- END: MODIFICATION ---
-
-@vonage_bp.route('/find_dids_for_npa', methods=['POST'])
-def handle_vonage_find_dids_for_npa():
-    # (Function unchanged)
-    log_enabled = settings_manager.get_setting('store_logs_enabled')
+@vonage_bp.route('/subaccounts/create', methods=['POST'])
+def create_subaccount():
     data = request.get_json()
-    if not data: return jsonify({"error": "Invalid JSON payload"}), 400
-    npa = data.get('npa')
-    quantity = data.get('quantity', 1)
-    if not npa or not isinstance(npa, str) or len(npa) != 3: return jsonify({"error": "Invalid NPA format. Must be a 3-digit string.", "npa": npa}), 400
-    if not isinstance(quantity, int) or not 1 <= quantity <= 100: return jsonify({"error": "Quantity must be an integer between 1 and 100.", "npa": npa}), 400
-    credentials, error = _get_credentials_from_request(data)
-    if error: return jsonify(error[0]), error[1]
-    npa_data = load_config_file(NPA_DATA_CONFIG_FILE)
-    if not npa_data: return jsonify({"error": "NPA data configuration file not found or is empty.", "npa": npa}), 500
-    country = 'US' if npa in npa_data.get('US', []) else 'CA' if npa in npa_data.get('CA', []) else None
-    if not country: return jsonify({"error": f"NPA '{npa}' not found in US or CA data.", "npa": npa, "data": {"numbers": [], "count": 0, "npa": npa}}), 404
-    search_params = { 'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': quantity }
-    result_data, status_code = client.search_dids(credentials['api_key'], credentials['api_secret'], search_params, log_enabled=log_enabled)
-    if isinstance(result_data, dict): result_data['npa'] = npa
-    response_body = {"status_code": status_code, "data": result_data}
-    if status_code >= 400: response_body = {"status_code": status_code, **result_data}
-    return jsonify(response_body), status_code
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+
+        # Extract subaccount creation specific data
+        payload = {
+            "name": data.get('name'),
+            "secret": data.get('secret'),
+            "use_primary_account_balance": data.get('use_primary_balance', True)
+        }
+        
+        result, status_code = vonage_client.create_subaccount(
+            primary_api_key=creds['api_key'],
+            primary_api_secret=creds['api_secret'],
+            payload=payload,
+            log_enabled=log_enabled
+        )
+        # Add a clear message for the UI
+        if status_code < 400:
+            result['message'] = f"Successfully created subaccount '{result.get('name')}'."
+        
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+@vonage_bp.route('/subaccounts/update', methods=['POST'])
+def update_subaccount():
+    data = request.get_json()
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        
+        payload = {
+            "name": data.get('name'),
+            "suspended": data.get('suspended')
+        }
+        subaccount_key = data.get('subaccount_key')
+        
+        result, status_code = vonage_client.update_subaccount(
+            primary_api_key=creds['api_key'],
+            primary_api_secret=creds['api_secret'],
+            subaccount_key=subaccount_key,
+            payload=payload,
+            log_enabled=log_enabled
+        )
+        if status_code < 400:
+            result['message'] = f"Successfully updated subaccount '{result.get('name')}'."
+            
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+
+# --- DID Management Endpoints ---
+
+@vonage_bp.route('/dids/search', methods=['POST'])
+def search_dids():
+    data = request.get_json()
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        
+        params = {
+            "country": data.get('country'),
+            "type": data.get('type'),
+            "pattern": data.get('pattern'),
+            "search_pattern": data.get('search_pattern'),
+            "features": data.get('features')
+        }
+        
+        result, status_code = vonage_client.search_dids(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            params=params,
+            log_enabled=log_enabled
+        )
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+@vonage_bp.route('/dids/buy', methods=['POST'])
+def buy_did():
+    data = request.get_json()
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        
+        result, status_code = vonage_client.buy_did(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            country=data.get('country'),
+            msisdn=data.get('msisdn'),
+            target_api_key=data.get('target_api_key'),
+            log_enabled=log_enabled,
+            treat_420_as_success=settings_manager.get_setting('treat_420_as_success_buy'),
+            verify_on_420=settings_manager.get_setting('verify_on_420_buy')
+        )
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+@vonage_bp.route('/dids/update', methods=['POST'])
+def update_did():
+    data = request.get_json()
+    try:
+        # This can handle manual entry or stored credentials
+        if data.get('account_name'):
+            creds = _get_credentials_from_request(data)
+        else:
+            creds = {'api_key': data.get('username'), 'api_secret': data.get('password')}
+            if not creds['api_key'] or not creds['api_secret']:
+                raise ValueError("Manual entry requires both API Key and Secret.")
+
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        
+        result, status_code = vonage_client.update_did(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            country=data.get('country'),
+            msisdn=data.get('msisdn'),
+            config=data.get('config'),
+            log_enabled=log_enabled,
+            treat_420_as_success=settings_manager.get_setting('treat_420_as_success_configure')
+        )
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+        
+@vonage_bp.route('/dids/release', methods=['POST'])
+def release_did():
+    data = request.get_json()
+    try:
+        # Release can also use manual or stored creds
+        if data.get('account_name'):
+            creds = _get_credentials_from_request(data)
+        else:
+            creds = {'api_key': data.get('username'), 'api_secret': data.get('password')}
+            if not creds['api_key'] or not creds['api_secret']:
+                raise ValueError("Manual entry requires both API Key and Secret.")
+
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+
+        result, status_code = vonage_client.cancel_did(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            country=data.get('country'),
+            msisdn=data.get('msisdn'),
+            log_enabled=log_enabled
+        )
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+
+# Add stubs for other UI functions if they have corresponding backend calls.
+# The current JS file seems to call endpoints that are covered above.
+# If you add more UI features (like PSIP trunking from the UI), their endpoints would go here.
 
 # --- END OF FILE vendors/vonage/routes.py ---
