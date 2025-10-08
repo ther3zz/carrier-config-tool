@@ -1,12 +1,13 @@
 # --- START OF FILE fastapi_app.py ---
 
 import os
+import asyncio # <-- Import asyncio for concurrency
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware # Correct import path
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional
+from typing import Optional, List # <-- Import List for batching
 
 # --- Import Core Application Logic ---
 from utils.config_loader import load_config_file
@@ -49,7 +50,6 @@ VONAGE_PRIMARY_ACCOUNT_NAME = os.environ.get("VONAGE_PRIMARY_ACCOUNT_NAME")
 
 async def verify_ip_address(request: Request):
     if not IP_WHITELIST: return
-    # This `request.client.host` will now be the real client IP thanks to the middleware
     client_ip = request.client.host
     if client_ip not in IP_WHITELIST:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"IP address {client_ip} is not allowed.")
@@ -101,15 +101,11 @@ class DIDUpdateRequest(BaseModel):
     country: Optional[str] = Field(None, description="Optional. The 2-letter ISO country code of the DID (e.g., 'US', 'CA'). If omitted, the system will attempt to auto-detect the country for US/CA numbers.", min_length=2, max_length=2)
     voice_callback_type: Optional[str] = Field(None, description="The voice callback type to set (e.g., 'sip', 'tel'). To unset a callback, provide an empty string ''.")
     voice_callback_value: Optional[str] = Field(None, description="The voice callback value to set (e.g., 'sbc.domain.com'). To unset a callback, provide an empty string ''.")
-    # --- START: MODIFICATION (Add optional flag) ---
     update_group_defaults: bool = Field(False, description="If true, the provided callback values will also be saved as the new defaults for this groupid for future provisioning.")
-    # --- END: MODIFICATION ---
-
     @field_validator('country')
     def uppercase_country_code(cls, v):
         if v is not None: return v.upper()
         return v
-    
     @model_validator(mode='after')
     def check_callback_fields(self):
         type_provided = self.voice_callback_type is not None
@@ -134,6 +130,52 @@ class UpdateSuccessResponse(BaseModel):
     status: str = "success"
     message: str
 
+class DIDUpdateItem(BaseModel):
+    did: str = Field(..., description="The phone number (DID) to be updated.", pattern=r'^\d{10,15}$')
+    country: Optional[str] = Field(None, description="Optional. The 2-letter ISO country code of the DID.", min_length=2, max_length=2)
+
+class DIDBatchUpdateRequest(BaseModel):
+    groupid: str = Field(..., description="The group ID for the account that owns all DIDs in the list.")
+    dids: List[DIDUpdateItem] = Field(..., description="A list of DIDs to update.", min_length=1)
+    voice_callback_type: str = Field(..., description="The voice callback type to apply to all DIDs in the list.")
+    voice_callback_value: str = Field(..., description="The voice callback value to apply to all DIDs in the list.")
+    update_group_defaults: bool = Field(False, description="If true, also save these settings as the new defaults for the group.")
+
+class BatchResult(BaseModel):
+    did: str
+    status: str
+    detail: str
+
+class DIDBatchUpdateResponse(BaseModel):
+    message: str
+    total_processed: int
+    success_count: int
+    failed_count: int
+    results: List[BatchResult]
+    
+# --- START: MODIFICATION (Add models for Batch DID Provisioning) ---
+class DIDBatchProvisionRequest(BaseModel):
+    groupid: str = Field(..., description="The group ID for the account that will own the provisioned DIDs.")
+    npas: List[str] = Field(..., description="A list of 3-digit NPAs to provision one number from each.", min_length=1)
+    voice_callback_type: str = Field(..., description="The voice callback type to apply to all newly provisioned DIDs.")
+    voice_callback_value: str = Field(..., description="The voice callback value to apply to all newly provisioned DIDs.")
+    create_subaccount_if_not_found: bool = Field(False, description="If true, create a subaccount if one is not found for the groupid.")
+    update_group_defaults: bool = Field(False, description="If true, save the callback settings as the new defaults for the groupid.")
+
+class BatchProvisionResult(BaseModel):
+    npa: str
+    status: str
+    detail: str
+    provisioned_did: Optional[str] = None
+
+class DIDBatchProvisionResponse(BaseModel):
+    message: str
+    total_processed: int
+    success_count: int
+    failed_count: int
+    results: List[BatchProvisionResult]
+# --- END: MODIFICATION ---
+
 # --- API Endpoints ---
 @app.on_event("startup")
 async def startup_event():
@@ -150,7 +192,7 @@ async def startup_event():
     if credentials_manager.STORAGE_MODE == 'db' and not VONAGE_PRIMARY_ACCOUNT_NAME:
         print("WARNING: `VONAGE_PRIMARY_ACCOUNT_NAME` is not set. The auto-create subaccount feature will be disabled.")
 
-
+# ... (Endpoints for /provision-did, /update-did, /release-did, /update-group-defaults, /update-dids-batch are unchanged) ...
 @app.post("/provision-did", response_model=ProvisioningResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Request):
     if credentials_manager.STORAGE_MODE != 'db': raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
@@ -207,8 +249,7 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
 
 @app.post("/update-did", response_model=DIDUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def update_did_endpoint(request: DIDUpdateRequest, request_obj: Request):
-    if credentials_manager.STORAGE_MODE != 'db':
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
+    if credentials_manager.STORAGE_MODE != 'db': raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
@@ -253,8 +294,6 @@ async def update_did_endpoint(request: DIDUpdateRequest, request_obj: Request):
     )
     if update_status >= 400:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to update DID {request.did}. Vonage API error: {update_result.get('error', 'Unknown error')}")
-    
-    # --- START: MODIFICATION (Update defaults if requested) ---
     update_message = f"Successfully updated DID {request.did} for groupid '{request.groupid}'."
     if request.update_group_defaults:
         try:
@@ -268,10 +307,7 @@ async def update_did_endpoint(request: DIDUpdateRequest, request_obj: Request):
             )
             update_message += " Stored defaults for the group were also updated."
         except Exception as e:
-            # Report the partial success if saving defaults fails
             update_message += f" However, failed to update the stored defaults for the group: {e}"
-    # --- END: MODIFICATION ---
-
     return DIDUpdateResponse(
         message=update_message,
         updated_did=request.did,
@@ -320,5 +356,221 @@ async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest):
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while saving the new defaults: {e}")
     return UpdateSuccessResponse(message=f"Successfully updated stored defaults for groupid '{request.groupid}'.")
+
+@app.post("/update-dids-batch", response_model=DIDBatchUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
+async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest):
+    if credentials_manager.STORAGE_MODE != 'db':
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
+    log_enabled = settings_manager.get_setting('store_logs_enabled')
+    max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
+    delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
+    treat_420_as_success = settings_manager.get_setting('treat_420_as_success_configure', False)
+    try:
+        subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
+    results = []
+    did_items = request.dids
+    for i in range(0, len(did_items), max_concurrency):
+        batch = did_items[i:i + max_concurrency]
+        tasks = []
+        for item in batch:
+            tasks.append(
+                _process_single_did_update(
+                    did_item=item,
+                    subaccount_creds=subaccount_creds,
+                    request=request,
+                    log_enabled=log_enabled,
+                    treat_420_as_success=treat_420_as_success
+                )
+            )
+        batch_results = await asyncio.gather(*tasks)
+        results.extend(batch_results)
+        if i + max_concurrency < len(did_items):
+            await asyncio.sleep(delay_ms / 1000.0)
+    success_count = sum(1 for r in results if r.status == 'success')
+    failed_count = len(results) - success_count
+    final_message = "Batch update process completed."
+    if request.update_group_defaults:
+        try:
+            credentials_manager.save_credential(
+                name=subaccount_creds['account_name'],
+                api_key=subaccount_creds['api_key'],
+                api_secret=subaccount_creds['api_secret'],
+                master_key=MASTER_KEY,
+                voice_callback_type=request.voice_callback_type,
+                voice_callback_value=request.voice_callback_value
+            )
+            final_message += " Stored defaults for the group were also updated."
+        except Exception as e:
+            final_message += f" However, failed to update the stored defaults for the group: {e}"
+    return DIDBatchUpdateResponse(
+        message=final_message,
+        total_processed=len(results),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results
+    )
+
+async def _process_single_did_update(did_item, subaccount_creds, request, log_enabled, treat_420_as_success):
+    try:
+        country_to_use = did_item.country
+        msisdn_to_use = "".join(filter(str.isdigit, did_item.did))
+        if not country_to_use:
+            national_number = msisdn_to_use[-10:]
+            if len(national_number) == 10:
+                npa = national_number[:3]
+                if npa in NPA_DATA.get('US', []): country_to_use = 'US'
+                elif npa in NPA_DATA.get('CA', []): country_to_use = 'CA'
+                if country_to_use and not msisdn_to_use.startswith('1'): msisdn_to_use = '1' + national_number
+            if not country_to_use:
+                return BatchResult(did=did_item.did, status='failed', detail="Could not auto-detect country. Please provide a 2-letter 'country' code.")
+        update_config = {}
+        update_config['voiceCallbackType'] = request.voice_callback_type
+        final_callback_value = request.voice_callback_value
+        if request.voice_callback_type == 'sip' and '@' not in final_callback_value and final_callback_value != '':
+            final_callback_value = f"{_get_national_number(msisdn_to_use, country_to_use)}@{final_callback_value}"
+        update_config['voiceCallbackValue'] = final_callback_value
+        update_result, update_status = await asyncio.to_thread(
+            vonage_client.update_did,
+            username=subaccount_creds['api_key'],
+            password=subaccount_creds['api_secret'],
+            country=country_to_use,
+            msisdn=msisdn_to_use,
+            config=update_config,
+            log_enabled=log_enabled,
+            treat_420_as_success=treat_420_as_success
+        )
+        if update_status >= 400:
+            return BatchResult(did=did_item.did, status='failed', detail=f"Vonage API error: {update_result.get('error', 'Unknown error')}")
+        return BatchResult(did=did_item.did, status='success', detail="DID updated successfully.")
+    except Exception as e:
+        return BatchResult(did=did_item.did, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
+
+# --- START: MODIFICATION (Add new batch provisioning endpoint) ---
+@app.post("/provision-dids-batch", response_model=DIDBatchProvisionResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
+async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
+    """
+    Provisions one DID from each requested NPA in controlled, concurrent batches.
+    """
+    if credentials_manager.STORAGE_MODE != 'db':
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
+
+    # --- Fetch Settings ---
+    log_enabled = settings_manager.get_setting('store_logs_enabled')
+    max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
+    delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
+    treat_420_as_success_buy = settings_manager.get_setting('treat_420_as_success_buy', False)
+    verify_on_420_buy = settings_manager.get_setting('verify_on_420_buy', False)
+    treat_420_as_success_configure = settings_manager.get_setting('treat_420_as_success_configure', False)
+
+    # --- Get/Create Credentials ---
+    try:
+        subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
+    except ValueError:
+        if not request.create_subaccount_if_not_found:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No credential found for groupid '{request.groupid}' and auto-create was not requested.")
+        if not VONAGE_PRIMARY_ACCOUNT_NAME:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auto-create subaccount failed: `VONAGE_PRIMARY_ACCOUNT_NAME` is not configured on the server.")
+        try:
+            primary_creds = credentials_manager.get_decrypted_credentials(VONAGE_PRIMARY_ACCOUNT_NAME, MASTER_KEY)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Auto-create failed: Could not load primary account credentials: {e}")
+        new_subaccount_name = f"GroupId [{request.groupid}]"
+        create_payload = {"name": new_subaccount_name, "use_primary_account_balance": True}
+        create_result, create_status = vonage_client.create_subaccount(primary_api_key=primary_creds['api_key'], primary_api_secret=primary_creds['api_secret'], payload=create_payload, log_enabled=log_enabled)
+        if create_status >= 400: raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to create subaccount: {create_result.get('error', 'Unknown')}")
+        new_api_key, new_secret = create_result.get('api_key'), create_result.get('secret')
+        if not new_api_key or not new_secret: raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Created subaccount but did not receive credentials.")
+        try:
+            credentials_manager.save_credential(name=new_subaccount_name, api_key=new_api_key, api_secret=new_secret, master_key=MASTER_KEY)
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save new credentials: {e}")
+        subaccount_creds = {"api_key": new_api_key, "api_secret": new_secret, "account_name": new_subaccount_name}
+
+    results = []
+    for i in range(0, len(request.npas), max_concurrency):
+        batch = request.npas[i:i + max_concurrency]
+        tasks = [
+            _process_single_did_provision(
+                npa=npa,
+                subaccount_creds=subaccount_creds,
+                request=request,
+                settings={
+                    "log_enabled": log_enabled,
+                    "treat_420_as_success_buy": treat_420_as_success_buy,
+                    "verify_on_420_buy": verify_on_420_buy,
+                    "treat_420_as_success_configure": treat_420_as_success_configure,
+                },
+            ) for npa in batch
+        ]
+        batch_results = await asyncio.gather(*tasks)
+        results.extend(batch_results)
+        if i + max_concurrency < len(request.npas):
+            await asyncio.sleep(delay_ms / 1000.0)
+
+    # --- Summarize Results ---
+    success_count = sum(1 for r in results if r.status == 'success')
+    failed_count = len(results) - success_count
+    final_message = "Batch provisioning process completed."
+    if request.update_group_defaults:
+        try:
+            credentials_manager.save_credential(
+                name=subaccount_creds['account_name'], api_key=subaccount_creds['api_key'],
+                api_secret=subaccount_creds['api_secret'], master_key=MASTER_KEY,
+                voice_callback_type=request.voice_callback_type, voice_callback_value=request.voice_callback_value
+            )
+            final_message += " Stored defaults for the group were also updated."
+        except Exception as e:
+            final_message += f" However, failed to update the stored defaults for the group: {e}"
+
+    return DIDBatchProvisionResponse(
+        message=final_message, total_processed=len(results),
+        success_count=success_count, failed_count=failed_count, results=results
+    )
+
+async def _process_single_did_provision(npa, subaccount_creds, request, settings):
+    """Helper coroutine to provision one DID from a given NPA."""
+    try:
+        country = 'US' if npa in NPA_DATA.get('US', []) else 'CA' if npa in NPA_DATA.get('CA', []) else None
+        if not country:
+            return BatchProvisionResult(npa=npa, status='failed', detail=f"NPA not found in US or CA data.")
+
+        search_params = {'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': 1}
+        search_result, search_status = await asyncio.to_thread(
+            vonage_client.search_dids, subaccount_creds['api_key'], subaccount_creds['api_secret'], search_params, log_enabled=settings['log_enabled']
+        )
+        if search_status >= 400 or not search_result.get('numbers'):
+            return BatchProvisionResult(npa=npa, status='failed', detail=f"No available numbers found. API error: {search_result.get('error', 'Unknown')}")
+
+        did_to_buy = search_result['numbers'][0]
+        msisdn = did_to_buy.get('msisdn')
+
+        buy_result, buy_status = await asyncio.to_thread(
+            vonage_client.buy_did,
+            username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country, msisdn=msisdn,
+            log_enabled=settings['log_enabled'], treat_420_as_success=settings['treat_420_as_success_buy'], verify_on_420=settings['verify_on_420_buy']
+        )
+        if buy_status >= 400:
+            return BatchProvisionResult(npa=npa, status='failed', detail=f"Failed to purchase DID {msisdn}. API error: {buy_result.get('error', 'Unknown')}")
+        
+        final_callback_value = request.voice_callback_value
+        if request.voice_callback_type == 'sip' and '@' not in final_callback_value:
+            final_callback_value = f"{_get_national_number(msisdn, country)}@{final_callback_value}"
+        update_config = {'voiceCallbackType': request.voice_callback_type, 'voiceCallbackValue': final_callback_value}
+        
+        update_result, update_status = await asyncio.to_thread(
+            vonage_client.update_did,
+            username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country, msisdn=msisdn, config=update_config,
+            log_enabled=settings['log_enabled'], treat_420_as_success=settings['treat_420_as_success_configure']
+        )
+        if update_status >= 400:
+            return BatchProvisionResult(npa=npa, status='partial_success', provisioned_did=msisdn, detail=f"Provisioned DID {msisdn} but failed to apply configuration: {update_result.get('error', 'Unknown')}")
+
+        return BatchProvisionResult(npa=npa, status='success', provisioned_did=msisdn, detail=f"Successfully provisioned and configured DID {msisdn}.")
+
+    except Exception as e:
+        return BatchProvisionResult(npa=npa, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
+# --- END: MODIFICATION ---
 
 # --- END OF FILE fastapi_app.py ---
