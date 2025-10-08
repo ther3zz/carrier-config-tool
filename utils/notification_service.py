@@ -17,27 +17,23 @@ async def send_notification(event_type: str, data: dict):
     """
     Constructs and sends a webhook notification based on global settings.
     Checks both the master switch and event-specific switches before sending.
+    Supports both JSON and flattened form-urlencoded content types.
     """
-    # 1. Check if notifications are enabled globally (master switch)
     if not settings_manager.get_setting('notifications_enabled'):
         return
 
-    # --- START: MODIFICATION (Check granular event toggles) ---
-    # 2. Map event_type to its specific setting key and check if it's enabled
     event_setting_map = {
         "subaccount.created": "notifications_on_subaccount_created",
         "did.provisioned": "notifications_on_did_provisioned",
         "did.released": "notifications_on_did_released",
-        "test.event": "notifications_enabled" # Test event only respects the master switch
+        "test.event": "notifications_enabled"
     }
     
     event_key = event_setting_map.get(event_type)
     
-    # If the event is unknown or its specific toggle is off, abort.
     if not event_key or not settings_manager.get_setting(event_key):
         print(f"Notification Service: Skipping event '{event_type}' as it is disabled in settings.")
         return
-    # --- END: MODIFICATION ---
 
     webhook_url = settings_manager.get_setting('notifications_webhook_url')
     if not webhook_url:
@@ -47,6 +43,7 @@ async def send_notification(event_type: str, data: dict):
     secret = settings_manager.get_setting('notifications_secret')
     content_type = settings_manager.get_setting('notifications_content_type', 'application/json')
 
+    # Construct the original, canonical payload structure
     payload = {
         'event_type': event_type,
         'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -55,24 +52,29 @@ async def send_notification(event_type: str, data: dict):
     
     headers = {}
     request_kwargs = {'timeout': 10.0}
-
     payload_for_signing = None
 
+    # --- START: MODIFICATION (Flatten payload for form-urlencoded) ---
     if content_type == 'application/x-www-form-urlencoded':
-        form_data = {
+        # Create a new, flat dictionary by merging the top-level fields
+        # with the fields from the nested 'data' dictionary.
+        flat_form_data = {
             'event_type': payload['event_type'],
             'timestamp': payload['timestamp'],
-            'data': json.dumps(payload['data'])
+            **payload['data']  # Unpack the 'data' dictionary here
         }
-        request_kwargs['data'] = form_data
+        request_kwargs['data'] = flat_form_data
+        
+        # For signature consistency, we always sign the canonical JSON representation
         if secret:
             payload_for_signing = json.dumps(payload).encode('utf-8')
-    else: # Default to application/json
+    else:  # Default to application/json
         json_payload_bytes = json.dumps(payload).encode('utf-8')
         headers['Content-Type'] = 'application/json'
         request_kwargs['content'] = json_payload_bytes
         if secret:
             payload_for_signing = json_payload_bytes
+    # --- END: MODIFICATION ---
 
     if secret and payload_for_signing:
         signature_hash = hmac.new(secret.encode('utf-8'), payload_for_signing, hashlib.sha256)
