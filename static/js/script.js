@@ -25,7 +25,8 @@ let appSettings = {
     treat_420_as_success_configure: false,
     notifications_enabled: false,
     notifications_webhook_url: '',
-    notifications_secret: ''
+    notifications_secret: '',
+    notifications_content_type: 'application/json'
 };
 
 
@@ -62,7 +63,6 @@ const countryDialingCodes = countryData.reduce((acc, country) => { acc[country.c
 async function apiFetch(url, options = {}) {
     const headers = new Headers(options.headers || {});
     if (appSettings.store_logs_enabled) { headers.set('X-Log-Request', 'true'); }
-    // Do not set Content-Type for FormData, the browser does it with the correct boundary.
     if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) { 
         headers.set('Content-Type', 'application/json');
     }
@@ -95,7 +95,7 @@ async function handleRekeyCredentials() {
     const oldKey = oldKeyInput.value;
     const newKey = newKeyInput.value;
 
-    statusList.innerHTML = ''; // Clear previous results
+    statusList.innerHTML = '';
 
     if (!oldKey || !newKey) {
         alert("Both the Old and New Master Keys are required.");
@@ -137,7 +137,7 @@ async function handleRekeyCredentials() {
             throw new Error(data.error || 'An unknown error occurred during re-keying.');
         }
 
-        statusList.innerHTML = ''; // Clear processing message
+        statusList.innerHTML = ''; 
         const { success, failed } = data.results;
 
         success.forEach(name => {
@@ -215,7 +215,7 @@ async function handleFetchPsipDomains(event) {
 function renderPsipDomains() {
     const container = document.getElementById('vonage-psip-domain-list');
     const template = document.getElementById('vonage-psip-domain-template');
-    container.innerHTML = ''; // Clear previous results
+    container.innerHTML = ''; 
 
     if (!vonagePsipDomains || vonagePsipDomains.length === 0) {
         container.innerHTML = '<p>No PSIP domains found on this account.</p>';
@@ -341,17 +341,18 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('maxConcurrentRequests').value = appSettings.max_concurrent_requests; 
         document.getElementById('delayBetweenBatches').value = appSettings.delay_between_batches_ms; 
         
-        // --- START: MODIFICATION (Fix boolean conversion) ---
         document.getElementById('storeLogsToggle').checked = String(appSettings.store_logs_enabled).toLowerCase() === 'true';
         document.getElementById('treat420AsSuccess_buy').checked = String(appSettings.treat_420_as_success_buy).toLowerCase() === 'true';
         document.getElementById('verifyOn420_buy').checked = String(appSettings.verify_on_420_buy).toLowerCase() === 'true';
         document.getElementById('treat420AsSuccess_configure').checked = String(appSettings.treat_420_as_success_configure).toLowerCase() === 'true';
         
         notifToggle.checked = String(appSettings.notifications_enabled).toLowerCase() === 'true';
-        // --- END: MODIFICATION ---
 
         document.getElementById('notificationsWebhookUrl').value = appSettings.notifications_webhook_url || '';
         document.getElementById('notificationsSecret').value = appSettings.notifications_secret || '';
+        // --- START: MODIFICATION ---
+        document.getElementById('notificationsContentType').value = appSettings.notifications_content_type || 'application/json';
+        // --- END: MODIFICATION ---
         
         toggleNotificationDetails();
         settingsModal.style.display = 'block'; 
@@ -371,6 +372,9 @@ document.addEventListener('DOMContentLoaded', () => {
             notifications_enabled: document.getElementById('notificationsEnabledToggle').checked,
             notifications_webhook_url: document.getElementById('notificationsWebhookUrl').value,
             notifications_secret: document.getElementById('notificationsSecret').value,
+            // --- START: MODIFICATION ---
+            notifications_content_type: document.getElementById('notificationsContentType').value
+            // --- END: MODIFICATION ---
         }; 
         try { 
             const response = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(newSettings) }); 
