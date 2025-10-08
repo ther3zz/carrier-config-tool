@@ -14,9 +14,7 @@ from utils.config_loader import load_config_file
 from utils import credentials_manager
 from utils import settings_manager
 from utils import logger
-# --- START: MODIFICATION ---
 from utils import notification_service
-# --- END: MODIFICATION ---
 from vendors.vonage import client as vonage_client
 from utils import db_manager
 
@@ -218,7 +216,6 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Vonage API created subaccount but did not return complete credentials.")
         try:
             credentials_manager.save_credential(name=new_subaccount_name, api_key=new_api_key, api_secret=new_secret, master_key=MASTER_KEY)
-            # --- START: MODIFICATION (Fire Notification) ---
             notif_payload = {
                 "primary_account": VONAGE_PRIMARY_ACCOUNT_NAME,
                 "subaccount_name": new_subaccount_name,
@@ -227,7 +224,6 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
                 "created_by": "FastAPI Provisioning Endpoint"
             }
             notification_service.fire_and_forget("subaccount.created", notif_payload)
-            # --- END: MODIFICATION ---
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save new subaccount credentials to the database: {e}")
         subaccount_creds = {"api_key": new_api_key, "api_secret": new_secret, "account_name": new_subaccount_name, "default_voice_callback_type": None, "default_voice_callback_value": None}
@@ -262,12 +258,13 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
         else: configuration_status = f"Failed to apply settings from {source_of_config}: {update_result.get('error', 'Unknown error')}"
     else: configuration_status = "Skipped: No settings provided in request and no defaults configured for this group."
     
-    # --- START: MODIFICATION (Fire Notification) ---
+    # --- START: MODIFICATION ---
     notif_payload = {
         "groupid": request.groupid,
         "did": msisdn,
         "country": country,
         "subaccount_name": subaccount_creds['account_name'],
+        "subaccount_api_key": subaccount_creds['api_key'],
         "configuration": update_config,
         "configuration_status": configuration_status
     }
@@ -365,12 +362,13 @@ async def release_did_endpoint(request: DIDReleaseRequest, request_obj: Request)
     result_data, status_code = vonage_client.cancel_did(username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country_to_use, msisdn=msisdn_to_use, log_enabled=log_enabled)
     if status_code >= 400: raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to release DID {request.did}. Vonage API error: {result_data.get('error', 'Unknown error')}")
     
-    # --- START: MODIFICATION (Fire Notification) ---
+    # --- START: MODIFICATION ---
     notif_payload = {
         "groupid": request.groupid,
         "did": request.did,
         "country": country_to_use,
-        "subaccount_name": subaccount_creds['account_name']
+        "subaccount_name": subaccount_creds['account_name'],
+        "subaccount_api_key": subaccount_creds['api_key']
     }
     notification_service.fire_and_forget("did.released", notif_payload)
     # --- END: MODIFICATION ---
@@ -518,7 +516,6 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
         if not new_api_key or not new_secret: raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Created subaccount but did not receive credentials.")
         try:
             credentials_manager.save_credential(name=new_subaccount_name, api_key=new_api_key, api_secret=new_secret, master_key=MASTER_KEY)
-            # --- START: MODIFICATION (Fire Notification) ---
             notif_payload = {
                 "primary_account": VONAGE_PRIMARY_ACCOUNT_NAME,
                 "subaccount_name": new_subaccount_name,
@@ -527,7 +524,6 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
                 "created_by": "FastAPI Batch Provisioning Endpoint"
             }
             notification_service.fire_and_forget("subaccount.created", notif_payload)
-            # --- END: MODIFICATION ---
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save new credentials: {e}")
         subaccount_creds = {"api_key": new_api_key, "api_secret": new_secret, "account_name": new_subaccount_name}
@@ -612,13 +608,14 @@ async def _process_single_did_provision(npa, groupid, subaccount_creds, request,
         if update_status >= 400:
             configuration_status = f"Failed to apply configuration: {update_result.get('error', 'Unknown')}"
             
-        # --- START: MODIFICATION (Fire Notification) ---
+        # --- START: MODIFICATION ---
         notif_payload = {
             "groupid": groupid,
             "did": msisdn,
             "country": country,
             "npa": npa,
             "subaccount_name": subaccount_creds['account_name'],
+            "subaccount_api_key": subaccount_creds['api_key'],
             "configuration": update_config,
             "configuration_status": configuration_status
         }
