@@ -84,286 +84,123 @@ async function handleSaveCredentialChanges(form, originalCredData) { if (!master
 async function handleDeleteCredential(credentialName) { if (!credentialName || !masterKey) return; if (confirm(`Are you sure you want to delete "${credentialName}"? This action cannot be undone.`)) { displayResponse(`Deleting '${credentialName}'...`, 'pending'); try { const response = await apiFetch('/api/credentials/delete', { method: 'POST', body: JSON.stringify({ name: credentialName }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to delete'); displayResponse(data.message, 'success'); await handleSetMasterKey(); } catch (error) { handleFetchError(error, `Delete Credential`); } } }
 async function handleBulkImportCredentials() { if (!masterKey) { displayResponse("Error: Master Key must be set before importing.", "error"); return; } const textArea = document.getElementById('bulkCredentialInput'); const statusList = document.getElementById('importStatusList'); const statusArea = document.getElementById('importStatusArea'); const rawText = textArea.value; statusArea.querySelector('p').style.display = 'none'; statusList.innerHTML = ''; const lines = rawText.split('\n').filter(line => line.trim() !== ''); if (lines.length === 0) { displayResponse("Import field is empty. Please paste your data.", "error"); return; } const credentialsToImport = []; const invalidLines = []; lines.forEach((line, index) => { const parts = line.split('\t'); if (parts.length === 3 && parts[0].trim() && parts[1].trim() && parts[2].trim()) { credentialsToImport.push({ name: parts[0].trim(), apiKey: parts[1].trim(), apiSecret: parts[2].trim() }); } else { invalidLines.push(index + 1); } }); if (invalidLines.length > 0) { alert(`Warning: ${invalidLines.length} line(s) were skipped due to incorrect formatting (Line numbers: ${invalidLines.join(', ')}).`); } if (credentialsToImport.length === 0) { displayResponse("No valid credentials to import.", "error"); return; } let successCount = 0; for (const cred of credentialsToImport) { const li = document.createElement('li'); li.textContent = `Importing '${cred.name}'...`; statusList.appendChild(li); try { const response = await apiFetch('/api/credentials/save', { method: 'POST', body: JSON.stringify({ name: cred.name, api_key: cred.apiKey, api_secret: cred.apiSecret, master_key: masterKey }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); li.textContent = `SUCCESS: '${cred.name}' saved.`; li.className = 'status-success'; successCount++; } catch (error) { li.textContent = `FAILED: '${cred.name}' - ${error.message}`; li.className = 'status-error'; } } displayResponse(`Bulk import finished. ${successCount} of ${credentialsToImport.length} credentials saved successfully.`, successCount === credentialsToImport.length ? 'success' : 'error'); textArea.value = ''; await handleSetMasterKey(); }
 async function handleImportFromFile() { const fileInput = document.getElementById('credentialFileUpload'); const statusList = document.getElementById('importStatusList'); const statusArea = document.getElementById('importStatusArea'); if (!masterKey) { displayResponse("Error: Master Key must be set before importing.", "error"); return; } const file = fileInput.files[0]; if (!file) { displayResponse("Error: Please select a credentials.json file to upload.", "error"); return; } statusArea.querySelector('p').style.display = 'none'; statusList.innerHTML = `<li>Uploading and processing '${file.name}'...</li>`; const formData = new FormData(); formData.append('credential_file', file); formData.append('master_key', masterKey); try { const response = await apiFetch('/api/credentials/import', { method: 'POST', body: formData }); const data = await response.json(); if (!response.ok) { throw new Error(data.error || 'An unknown error occurred during import.'); } statusList.innerHTML = ''; const { success, failed } = data.results; success.forEach(name => { const li = document.createElement('li'); li.textContent = `SUCCESS: Migrated '${name}' to database.`; li.className = 'status-success'; statusList.appendChild(li); }); failed.forEach(item => { const li = document.createElement('li'); li.textContent = `FAILED: '${item.name}' - ${item.reason}`; li.className = 'status-error'; statusList.appendChild(li); }); const finalMessage = `File import finished. Success: ${success.length}, Failed: ${failed.length}.`; displayResponse(finalMessage, failed.length > 0 ? 'error' : 'success'); if (success.length > 0) { await handleSetMasterKey(); } } catch (error) { handleFetchError(error, 'File Import'); statusList.innerHTML = `<li class="status-error">Error during import: ${error.message}</li>`; } finally { fileInput.value = ''; } }
-async function handleRekeyCredentials() { const oldKeyInput = document.getElementById('oldMasterKeyInput'); const newKeyInput = document.getElementById('newMasterKeyInput'); const statusList = document.getElementById('rekeyStatusList'); const oldKey = oldKeyInput.value; const newKey = newKeyInput.value; statusList.innerHTML = ''; if (!oldKey || !newKey) { alert("Both the Old and New Master Keys are required."); return; } if (oldKey === newKey) { alert("The new Master Key must be different from the old one."); return; } const confirmation = confirm( "--- CRITICAL WARNING ---\n\n" + "You are about to re-encrypt ALL stored credentials. If you provide the wrong 'Old Master Key', " + "ALL CREDENTIALS WILL BE PERMANENTLY CORRUPTED AND UNRECOVERABLE.\n\n" + "There is NO UNDO. Are you absolutely sure you want to proceed?" ); if (!confirmation) { displayResponse("Re-keying operation cancelled by user.", "pending"); return; } displayResponse("Attempting to re-key all credentials...", "pending"); statusList.innerHTML = '<li>Processing... This may take a moment.</li>'; const payload = { old_master_key: oldKey, new_master_key: newKey }; try { const response = await apiFetch('/api/credentials/rekey', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) { throw new Error(data.error || 'An unknown error occurred during re-keying.'); } statusList.innerHTML = ''; const { success, failed } = data.results; success.forEach(name => { const li = document.createElement('li'); li.textContent = `SUCCESS: '${name}' was re-keyed.`; li.className = 'status-success'; statusList.appendChild(li); }); const finalMessage = `Re-keying process finished. Success: ${success.length}, Failed: ${failed.length}.`; displayResponse(finalMessage, 'success'); const instructionLi = document.createElement('li'); instructionLi.innerHTML = `<strong>IMPORTANT:</strong> Your session key is now outdated. Please enter your <strong>new Master Key</strong> in the 'Session Master Key' field at the top and click 'Set & Load' to continue working.`; instructionLi.style.marginTop = '15px'; instructionLi.style.fontWeight = 'bold'; instructionLi.className = 'status-pending'; statusList.appendChild(instructionLi); masterKey = null; document.getElementById('masterKeyInput').value = ''; document.getElementById('masterKeyStatus').textContent = 'Credentials have been re-keyed. Please set the new Master Key.'; document.getElementById('masterKeyStatus').className = 'status-pending'; document.getElementById('credentialManagerUI').style.display = 'none'; oldKeyInput.value = ''; newKeyInput.value = ''; } catch (error) { const errorMessage = `Re-keying FAILED: ${error.message}`; displayResponse(errorMessage, 'error'); statusList.innerHTML = `<li class="status-error">Operation failed. See main response area for details.</li>`; try { const errorData = JSON.parse(error.message.substring(error.message.indexOf('{'))); if(errorData && errorData.details) { errorData.details.forEach(item => { const li = document.createElement('li'); li.textContent = `FAILED: '${item.name}' - ${item.reason}`; li.className = 'status-error'; statusList.appendChild(li); }); } } catch (e) { } } }
 
-// --- START: MODIFICATION (Adding missing Vonage functions) ---
+// --- START: MODIFICATION (Revert rekey handler to simple JSON) ---
+async function handleRekeyCredentials() {
+    const oldKeyInput = document.getElementById('oldMasterKeyInput');
+    const newKeyInput = document.getElementById('newMasterKeyInput');
+    const statusList = document.getElementById('rekeyStatusList');
 
-// --- Vonage Subaccount Functions ---
-async function handleFetchSubaccounts(event) {
-    event.preventDefault();
-    displayResponse('Fetching subaccounts...', 'pending');
-    const listContainer = document.getElementById('vonage-subaccount-list-container');
-    const listEl = document.getElementById('vonage-subaccount-list');
-    listEl.innerHTML = '';
-    try {
-        const auth = getAuthPayload('vonage_manage_subaccounts');
-        const response = await apiFetch('/api/vonage/subaccounts', {
-            method: 'POST',
-            body: JSON.stringify(auth)
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Failed to fetch subaccounts');
-        
-        vonageSubaccounts = data.subaccounts || [];
-        displayResponse(`Successfully fetched ${vonageSubaccounts.length} subaccounts.`, 'success');
-        renderSubaccounts();
-        listContainer.style.display = vonageSubaccounts.length > 0 ? 'block' : 'none';
-    } catch (error) {
-        handleFetchError(error, 'Fetch Subaccounts');
-    }
-}
+    const oldKey = oldKeyInput.value;
+    const newKey = newKeyInput.value;
 
-async function handleCreateSubaccount(event) {
-    event.preventDefault();
-    displayResponse('Creating new subaccount...', 'pending');
-    try {
-        const auth = getAuthPayload('vonage_create_subaccount');
-        const payload = {
-            ...auth,
-            name: document.getElementById('vonage_new_subaccount_name').value,
-            secret: document.getElementById('vonage_new_subaccount_secret').value,
-            use_primary_balance: document.getElementById('vonage_new_subaccount_use_primary_balance').checked
-        };
-        const response = await apiFetch('/api/vonage/subaccounts/create', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Failed to create subaccount');
+    statusList.innerHTML = ''; // Clear previous results
 
-        handleBackendResponse(data);
-        document.getElementById('vonageCreateSubaccountForm').reset();
-    } catch (error) {
-        handleFetchError(error, 'Create Subaccount');
-    }
-}
-
-function renderSubaccounts() {
-    const container = document.getElementById('vonage-subaccount-list');
-    const template = document.getElementById('vonage-subaccount-template');
-    container.innerHTML = '';
-    if (!vonageSubaccounts || vonageSubaccounts.length === 0) {
-        container.innerHTML = '<p>No subaccounts found.</p>';
+    if (!oldKey || !newKey) {
+        alert("Both the Old and New Master Keys are required.");
         return;
     }
-    vonageSubaccounts.forEach(acc => {
-        const clone = template.content.cloneNode(true);
-        // Populate display fields
-        clone.querySelector('.subaccount-name-display').textContent = acc.name;
-        clone.querySelector('.subaccount-key-display').textContent = `(${acc.api_key})`;
-        const statusTag = clone.querySelector('.subaccount-status-tag');
-        statusTag.textContent = acc.suspended ? 'Suspended' : 'Active';
-        statusTag.className = acc.suspended ? 'subaccount-status-tag suspended' : 'subaccount-status-tag active';
-        
-        // Populate form fields
-        const form = clone.querySelector('.vonage-subaccount-form');
-        form.querySelector('.subaccount-api-key').value = acc.api_key;
-        form.querySelector('.api-key').value = acc.api_key;
-        form.querySelector('.created-at').value = new Date(acc.created_at).toLocaleString();
-        form.querySelector('.balance').value = `${acc.balance} ${acc.account_currency}`;
-        form.querySelector('.credit-limit').value = `${acc.credit_limit} ${acc.account_currency}`;
-        form.querySelector('.subaccount-name').value = acc.name;
-        form.querySelector('.suspended').checked = acc.suspended;
-        form.querySelector('.suspended-status').textContent = acc.suspended ? 'Yes' : 'No';
-        form.querySelector('.use-primary-balance').checked = acc.use_primary_account_balance;
-        form.querySelector('.use-primary-balance-status').textContent = acc.use_primary_account_balance ? 'Yes' : 'No';
-        
-        container.appendChild(clone);
-    });
-}
-
-async function handleSubaccountActions(event) {
-    const target = event.target;
-    if (target.classList.contains('save-subaccount-changes-btn')) {
-        event.preventDefault();
-        const form = target.closest('.vonage-subaccount-form');
-        const apiKey = form.querySelector('.subaccount-api-key').value;
-        const payload = {
-            ...getAuthPayload('vonage_manage_subaccounts'),
-            subaccount_key: apiKey,
-            name: form.querySelector('.subaccount-name').value,
-            suspended: form.querySelector('.suspended').checked
-        };
-        displayResponse(`Updating subaccount ${apiKey}...`, 'pending');
-        try {
-            const response = await apiFetch('/api/vonage/subaccounts/update', {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to update');
-            handleBackendResponse(data);
-            // Refresh list
-            document.getElementById('vonageFetchSubaccountsForm').requestSubmit();
-        } catch (error) {
-            handleFetchError(error, 'Update Subaccount');
-        }
-    } else if (target.classList.contains('cancel-subaccount-edit-btn')) {
-        event.preventDefault();
-        target.closest('details').open = false;
+    if (oldKey === newKey) {
+        alert("The new Master Key must be different from the old one.");
+        return;
     }
-}
 
+    const confirmation = confirm(
+        "--- CRITICAL WARNING ---\n\n" +
+        "You are about to re-encrypt ALL stored credentials. If you provide the wrong 'Old Master Key', " +
+        "ALL CREDENTIALS WILL BE PERMANENTLY CORRUPTED AND UNRECOVERABLE.\n\n" +
+        "There is NO UNDO. Are you absolutely sure you want to proceed?"
+    );
 
-// --- Vonage PSIP Functions ---
-function generateVonagePsipPayload() {
-    let acl = document.getElementById('vonage_psip_acl').value.split('\n').map(ip => ip.trim()).filter(ip => ip);
-    if (vonageIncludeStoredIps) {
-        const storedAcl = vonageStoredIps.map(item => item.ip);
-        acl = [...new Set([...acl, ...storedAcl])];
+    if (!confirmation) {
+        displayResponse("Re-keying operation cancelled by user.", "pending");
+        return;
     }
-    return {
-        name: document.getElementById('vonage_psip_name').value,
-        trunk_name: document.getElementById('vonage_psip_trunk_name').value,
-        tls: document.getElementById('vonage_psip_tls').value,
-        digest_auth: document.getElementById('vonage_psip_digest_auth').checked,
-        srtp: document.getElementById('vonage_psip_srtp').value,
-        acl: acl,
-        domain_type: document.getElementById('vonage_psip_domain_type').value
+
+    displayResponse("Attempting to re-key all credentials...", "pending");
+    statusList.innerHTML = '<li>Processing... This may take a moment.</li>';
+
+    const payload = {
+        old_master_key: oldKey,
+        new_master_key: newKey
     };
-}
-
-function generateVonagePsipCurlCommand() {
-    try {
-        const auth = getAuthPayload('vonage_psip');
-        const payload = generateVonagePsipPayload();
-        // This is a simplified example. Real usage would require proper escaping.
-        return `curl -X POST https://api.nexmo.com/v2/psip/domains \\
--H 'Content-Type: application/json' \\
--u '${auth.username}:${auth.password}' \\
--d '${JSON.stringify(payload, null, 2)}'`;
-    } catch (error) {
-        return `Error generating cURL: ${error.message}`;
-    }
-}
-
-async function handleVonagePsipSubmit(event) {
-    event.preventDefault();
-    displayResponse('Sending PSIP domain creation request...', 'pending');
-    try {
-        const auth = getAuthPayload('vonage_psip');
-        const payload = generateVonagePsipPayload();
-        const body = { ...auth, ...payload };
-        const response = await apiFetch('/api/vonage/psip/create', {
-            method: 'POST',
-            body: JSON.stringify(body)
-        });
-        const data = await response.json();
-        handleBackendResponse(data);
-    } catch (error) {
-        handleFetchError(error, 'Create PSIP Domain');
-    }
-}
-
-async function handleFetchPsipDomains(event) {
-    event.preventDefault();
-    displayResponse('Fetching PSIP domains...', 'pending');
-    const listContainer = document.getElementById('vonage-psip-domain-list-container');
-    const listEl = document.getElementById('vonage-psip-domain-list');
-    listEl.innerHTML = '';
-    try {
-        const auth = getAuthPayload('vonage_manage_psip');
-        const response = await apiFetch('/api/vonage/psip', {
-            method: 'POST',
-            body: JSON.stringify(auth)
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Failed to fetch domains');
-        
-        vonagePsipDomains = data.domains || [];
-        displayResponse(`Successfully fetched ${vonagePsipDomains.length} domains.`, 'success');
-        // A render function would be needed here, similar to renderSubaccounts
-        listContainer.style.display = vonagePsipDomains.length > 0 ? 'block' : 'none';
-        // renderPsipDomains(); 
-    } catch (error) {
-        handleFetchError(error, 'Fetch PSIP Domains');
-    }
-}
-
-async function handlePsipDomainActions(event) { /* Stub for future implementation */ }
-
-
-// --- Vonage DID Search, Purchase, Configure Functions ---
-async function handleVonageSearchSubmit(event) {
-    event.preventDefault();
-    displayResponse('Searching for available numbers...', 'pending');
-    document.getElementById('search-results-area').style.display = 'none';
-    document.getElementById('purchase-controls').style.display = 'none';
 
     try {
-        const auth = getAuthPayload('vonage_search');
-        const payload = {
-            ...auth,
-            country: document.getElementById('vonage_search_country').value,
-            type: document.getElementById('vonage_search_type').value,
-            pattern: document.getElementById('vonage_search_pattern').value,
-            search_pattern: document.getElementById('vonage_search_search_pattern').value,
-            features: document.getElementById('vonage_search_features').value,
-        };
-        const response = await apiFetch('/api/vonage/dids/search', {
+        const response = await apiFetch('/api/credentials/rekey', {
             method: 'POST',
             body: JSON.stringify(payload)
         });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Search failed');
+
+        if (!response.ok) {
+            throw new Error(data.error || 'An unknown error occurred during re-keying.');
+        }
+
+        statusList.innerHTML = ''; // Clear processing message
+        const { success, failed } = data.results;
+
+        success.forEach(name => {
+            const li = document.createElement('li');
+            li.textContent = `SUCCESS: '${name}' was re-keyed.`;
+            li.className = 'status-success';
+            statusList.appendChild(li);
+        });
         
-        renderSearchResults(data.numbers);
+        failed.forEach(item => {
+            const li = document.createElement('li');
+            li.textContent = `FAILED: '${item.name}' - ${item.reason}`;
+            li.className = 'status-error';
+            statusList.appendChild(li);
+        });
+
+        const finalMessage = `Re-keying process finished. Success: ${success.length}, Failed: ${failed.length}.`;
+        displayResponse(finalMessage, failed.length > 0 ? 'error' : 'success');
+        
+        if (failed.length === 0) {
+            const instructionLi = document.createElement('li');
+            instructionLi.innerHTML = `<strong>IMPORTANT:</strong> Your session key is now outdated. Please enter your <strong>new Master Key</strong> in the 'Session Master Key' field at the top and click 'Set & Load' to continue working.`;
+            instructionLi.style.marginTop = '15px';
+            instructionLi.style.fontWeight = 'bold';
+            instructionLi.className = 'status-pending';
+            statusList.appendChild(instructionLi);
+            
+            masterKey = null;
+            document.getElementById('masterKeyInput').value = '';
+            document.getElementById('masterKeyStatus').textContent = 'Credentials have been re-keyed. Please set the new Master Key.';
+            document.getElementById('masterKeyStatus').className = 'status-pending';
+            document.getElementById('credentialManagerUI').style.display = 'none';
+        }
+        
+        oldKeyInput.value = '';
+        newKeyInput.value = '';
+
     } catch (error) {
-        handleFetchError(error, 'DID Search');
+        const errorMessage = `Re-keying FAILED: ${error.message}`;
+        displayResponse(errorMessage, 'error');
+        statusList.innerHTML = `<li class="status-error">Operation failed. See main response area for details.</li>`;
     }
 }
+// --- END: MODIFICATION ---
 
-function renderSearchResults(numbers) {
-    const resultsArea = document.getElementById('search-results-area');
-    const container = document.getElementById('search-results-container').querySelector('ul');
-    const countEl = document.getElementById('search-count');
-    const purchaseButton = document.getElementById('vonage_purchase_button');
-    container.innerHTML = '';
-    
-    if (!numbers || numbers.length === 0) {
-        countEl.textContent = '0';
-        container.innerHTML = '<li>No numbers found matching your criteria.</li>';
-        resultsArea.style.display = 'block';
-        purchaseButton.disabled = true;
-        return;
-    }
-
-    countEl.textContent = numbers.length;
-    numbers.forEach(num => {
-        const li = document.createElement('li');
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'did-checkbox';
-        checkbox.value = num.msisdn;
-        checkbox.dataset.country = document.getElementById('vonage_search_country').value.toUpperCase();
-        
-        const label = document.createElement('label');
-        label.appendChild(checkbox);
-        label.append(` ${num.msisdn} - Features: ${num.features.join(', ')} - Cost: ${num.cost}`);
-        
-        li.appendChild(label);
-        container.appendChild(li);
-    });
-
-    resultsArea.style.display = 'block';
-    document.getElementById('purchase-controls').style.display = 'block';
-    updateSelectedCount();
-}
-
-function updateSelectedCount() {
-    const selected = document.querySelectorAll('#search-results-container .did-checkbox:checked').length;
-    document.getElementById('selected-count').textContent = selected;
-    document.getElementById('vonage_purchase_button').disabled = selected === 0;
-}
-
+// --- Vonage Functions ---
+async function handleFetchSubaccounts(event) { event.preventDefault(); displayResponse('Fetching subaccounts...', 'pending'); const listContainer = document.getElementById('vonage-subaccount-list-container'); const listEl = document.getElementById('vonage-subaccount-list'); listEl.innerHTML = ''; try { const auth = getAuthPayload('vonage_manage_subaccounts'); const response = await apiFetch('/api/vonage/subaccounts', { method: 'POST', body: JSON.stringify(auth) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to fetch subaccounts'); vonageSubaccounts = data.subaccounts || []; displayResponse(`Successfully fetched ${vonageSubaccounts.length} subaccounts.`, 'success'); renderSubaccounts(); listContainer.style.display = vonageSubaccounts.length > 0 ? 'block' : 'none'; } catch (error) { handleFetchError(error, 'Fetch Subaccounts'); } }
+async function handleCreateSubaccount(event) { event.preventDefault(); displayResponse('Creating new subaccount...', 'pending'); try { const auth = getAuthPayload('vonage_create_subaccount'); const payload = { ...auth, name: document.getElementById('vonage_new_subaccount_name').value, secret: document.getElementById('vonage_new_subaccount_secret').value, use_primary_balance: document.getElementById('vonage_new_subaccount_use_primary_balance').checked }; const response = await apiFetch('/api/vonage/subaccounts/create', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to create subaccount'); handleBackendResponse(data); document.getElementById('vonageCreateSubaccountForm').reset(); } catch (error) { handleFetchError(error, 'Create Subaccount'); } }
+function renderSubaccounts() { const container = document.getElementById('vonage-subaccount-list'); const template = document.getElementById('vonage-subaccount-template'); container.innerHTML = ''; if (!vonageSubaccounts || vonageSubaccounts.length === 0) { container.innerHTML = '<p>No subaccounts found.</p>'; return; } vonageSubaccounts.forEach(acc => { const clone = template.content.cloneNode(true); clone.querySelector('.subaccount-name-display').textContent = acc.name; clone.querySelector('.subaccount-key-display').textContent = `(${acc.api_key})`; const statusTag = clone.querySelector('.subaccount-status-tag'); statusTag.textContent = acc.suspended ? 'Suspended' : 'Active'; statusTag.className = acc.suspended ? 'subaccount-status-tag suspended' : 'subaccount-status-tag active'; const form = clone.querySelector('.vonage-subaccount-form'); form.querySelector('.subaccount-api-key').value = acc.api_key; form.querySelector('.api-key').value = acc.api_key; form.querySelector('.created-at').value = new Date(acc.created_at).toLocaleString(); form.querySelector('.balance').value = `${acc.balance} ${acc.account_currency}`; form.querySelector('.credit-limit').value = `${acc.credit_limit} ${acc.account_currency}`; form.querySelector('.subaccount-name').value = acc.name; form.querySelector('.suspended').checked = acc.suspended; form.querySelector('.suspended-status').textContent = acc.suspended ? 'Yes' : 'No'; form.querySelector('.use-primary-balance').checked = acc.use_primary_account_balance; form.querySelector('.use-primary-balance-status').textContent = acc.use_primary_account_balance ? 'Yes' : 'No'; container.appendChild(clone); }); }
+async function handleSubaccountActions(event) { const target = event.target; if (target.classList.contains('save-subaccount-changes-btn')) { event.preventDefault(); const form = target.closest('.vonage-subaccount-form'); const apiKey = form.querySelector('.subaccount-api-key').value; const payload = { ...getAuthPayload('vonage_manage_subaccounts'), subaccount_key: apiKey, name: form.querySelector('.subaccount-name').value, suspended: form.querySelector('.suspended').checked }; displayResponse(`Updating subaccount ${apiKey}...`, 'pending'); try { const response = await apiFetch('/api/vonage/subaccounts/update', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to update'); handleBackendResponse(data); document.getElementById('vonageFetchSubaccountsForm').requestSubmit(); } catch (error) { handleFetchError(error, 'Update Subaccount'); } } else if (target.classList.contains('cancel-subaccount-edit-btn')) { event.preventDefault(); target.closest('details').open = false; } }
+function generateVonagePsipPayload() { let acl = document.getElementById('vonage_psip_acl').value.split('\n').map(ip => ip.trim()).filter(ip => ip); if (vonageIncludeStoredIps) { const storedAcl = vonageStoredIps.map(item => item.ip); acl = [...new Set([...acl, ...storedAcl])]; } return { name: document.getElementById('vonage_psip_name').value, trunk_name: document.getElementById('vonage_psip_trunk_name').value, tls: document.getElementById('vonage_psip_tls').value, digest_auth: document.getElementById('vonage_psip_digest_auth').checked, srtp: document.getElementById('vonage_psip_srtp').value, acl: acl, domain_type: document.getElementById('vonage_psip_domain_type').value }; }
+function generateVonagePsipCurlCommand() { try { const auth = getAuthPayload('vonage_psip'); const payload = generateVonagePsipPayload(); return `curl -X POST https://api.nexmo.com/v2/psip/domains \\ -H 'Content-Type: application/json' \\ -u '${auth.username}:${auth.password}' \\ -d '${JSON.stringify(payload, null, 2)}'`; } catch (error) { return `Error generating cURL: ${error.message}`; } }
+async function handleVonagePsipSubmit(event) { event.preventDefault(); displayResponse('Sending PSIP domain creation request...', 'pending'); try { const auth = getAuthPayload('vonage_psip'); const payload = generateVonagePsipPayload(); const body = { ...auth, ...payload }; const response = await apiFetch('/api/vonage/psip/create', { method: 'POST', body: JSON.stringify(body) }); const data = await response.json(); handleBackendResponse(data); } catch (error) { handleFetchError(error, 'Create PSIP Domain'); } }
+async function handleFetchPsipDomains(event) { event.preventDefault(); displayResponse('Fetching PSIP domains...', 'pending'); const listContainer = document.getElementById('vonage-psip-domain-list-container'); const listEl = document.getElementById('vonage-psip-domain-list'); listEl.innerHTML = ''; try { const auth = getAuthPayload('vonage_manage_psip'); const response = await apiFetch('/api/vonage/psip', { method: 'POST', body: JSON.stringify(auth) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Failed to fetch domains'); vonagePsipDomains = data.domains || []; displayResponse(`Successfully fetched ${vonagePsipDomains.length} domains.`, 'success'); listContainer.style.display = vonagePsipDomains.length > 0 ? 'block' : 'none'; } catch (error) { handleFetchError(error, 'Fetch PSIP Domains'); } }
+async function handlePsipDomainActions(event) { /* Stub for future implementation */ }
+async function handleVonageSearchSubmit(event) { event.preventDefault(); displayResponse('Searching for available numbers...', 'pending'); document.getElementById('search-results-area').style.display = 'none'; document.getElementById('purchase-controls').style.display = 'none'; try { const auth = getAuthPayload('vonage_search'); const payload = { ...auth, country: document.getElementById('vonage_search_country').value, type: document.getElementById('vonage_search_type').value, pattern: document.getElementById('vonage_search_pattern').value, search_pattern: document.getElementById('vonage_search_search_pattern').value, features: document.getElementById('vonage_search_features').value, }; const response = await apiFetch('/api/vonage/dids/search', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Search failed'); renderSearchResults(data.numbers); } catch (error) { handleFetchError(error, 'DID Search'); } }
+function renderSearchResults(numbers) { const resultsArea = document.getElementById('search-results-area'); const container = document.getElementById('search-results-container').querySelector('ul'); const countEl = document.getElementById('search-count'); const purchaseButton = document.getElementById('vonage_purchase_button'); container.innerHTML = ''; if (!numbers || numbers.length === 0) { countEl.textContent = '0'; container.innerHTML = '<li>No numbers found matching your criteria.</li>'; resultsArea.style.display = 'block'; purchaseButton.disabled = true; return; } countEl.textContent = numbers.length; numbers.forEach(num => { const li = document.createElement('li'); const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'did-checkbox'; checkbox.value = num.msisdn; checkbox.dataset.country = document.getElementById('vonage_search_country').value.toUpperCase(); const label = document.createElement('label'); label.appendChild(checkbox); label.append(` ${num.msisdn} - Features: ${num.features.join(', ')} - Cost: ${num.cost}`); li.appendChild(label); container.appendChild(li); }); resultsArea.style.display = 'block'; document.getElementById('purchase-controls').style.display = 'block'; updateSelectedCount(); }
+function updateSelectedCount() { const selected = document.querySelectorAll('#search-results-container .did-checkbox:checked').length; document.getElementById('selected-count').textContent = selected; document.getElementById('vonage_purchase_button').disabled = selected === 0; }
 async function handlePurchaseButtonClick() { /* Stub for individual purchase */ }
 async function handleBulkNpaPurchaseClick() { /* Stub for bulk purchase */ }
 async function handleConfigureClick() { /* Stub for configuration */ }
 async function handleExportClick() { /* Stub for export */ }
 async function handleVonageModifyDidSubmit(event) { event.preventDefault(); /* Stub for modify */ }
 async function handleVonageReleaseDidSubmit(event) { event.preventDefault(); /* Stub for release */ }
-
-// --- END: MODIFICATION ---
 
 // --- UI & DOM Functions ---
 function populateCredentialSelector(container) { const triggerText = container.querySelector('.custom-select-trigger span'); const optionsContainer = container.querySelector('.custom-options'); const filterInput = container.querySelector('.credential-filter-input'); const valueInput = container.querySelector('.credential-selector-value'); if (!triggerText || !optionsContainer || !filterInput || !valueInput) return; optionsContainer.querySelectorAll('.custom-option:not(.filter-option)').forEach(opt => opt.remove()); filterInput.value = ''; const createOption = (text, value) => { const option = document.createElement('div'); option.classList.add('custom-option'); option.dataset.value = value; option.textContent = text; return option; }; let defaultText, defaultValue; if (!masterKey || storedCredentials.length === 0) { defaultText = masterKey ? '-- No Credentials Found --' : '-- Set Master Key First --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); } else { defaultText = '-- Select a Credential --'; defaultValue = ''; optionsContainer.appendChild(createOption(defaultText, '')); storedCredentials.forEach(c => { optionsContainer.appendChild(createOption(`${c.name} (${c.api_key_hint})`, c.name)); }); } const manualOpt = createOption('== Manual Entry ==', 'manual'); manualOpt.style.fontWeight = 'bold'; optionsContainer.appendChild(manualOpt); triggerText.textContent = defaultText; valueInput.value = defaultValue; container.querySelector('.custom-option')?.classList.add('selected'); const filterOption = container.querySelector('.filter-option'); filterOption.style.display = storedCredentials.length > 5 ? 'block' : 'none'; }
@@ -383,7 +220,6 @@ function populateUriDatalist(datalistId) { const datalist = document.getElementB
 function populateModifyDidUriDatalist() { populateUriDatalist('vonageModify_storedUrisDatalist'); }
 function handleAddStoredItem(event) { const type = event.target.dataset.type; const parentContainer = event.target.closest('.action-content, div[style*="padding: 10px"]'); if (!parentContainer) return; const valueInput = parentContainer.querySelector(`#vonage_${type === 'ip' ? 'psip' : 'config'}_newItemValue`); const labelInput = parentContainer.querySelector(`#vonage_${type === 'ip' ? 'psip' : 'config'}_newItemLabel`); let value = valueInput?.value.trim(); const label = labelInput?.value.trim(); if (!value) { alert(`Please enter a value for the ${type.toUpperCase()}.`); return; } if (type === 'ip') { const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/; if (!ipv4Pattern.test(value)) { alert('Please enter a valid IPv4 address (e.g. 192.168.1.1 or 192.168.1.1/32)'); return; } if (!value.includes('/')) { value += '/32'; } vonageStoredIps.push({ ip: value, label }); renderVonageStoredIps(); } else if (type === 'uri') { vonageStoredUris.push({ uri: value, label }); renderVonageStoredUris(); } if (valueInput) valueInput.value = ''; if (labelInput) labelInput.value = ''; }
 function handleDeleteStoredItem(event) { const index = parseInt(event.target.dataset.index, 10); const type = event.target.dataset.type; if (isNaN(index)) return; if (type === 'ip') { vonageStoredIps.splice(index, 1); renderVonageStoredIps(); } else if (type === 'uri') { vonageStoredUris.splice(index, 1); renderVonageStoredUris(); } }
-
 
 // --- Status & Response Display Functions ---
 function displayOperationStatusMessage(message, parentArea, referenceNode) { parentArea.querySelectorAll('p.status-message').forEach(p => p.remove()); const p = document.createElement('p'); p.textContent = message; p.className = 'status-message'; parentArea.insertBefore(p, referenceNode); }
