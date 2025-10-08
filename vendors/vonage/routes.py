@@ -3,6 +3,9 @@
 from flask import Blueprint, request, jsonify
 from utils import credentials_manager
 from utils import settings_manager
+# --- START: MODIFICATION ---
+from utils.password_generator import generate_secure_secret
+# --- END: MODIFICATION ---
 from . import client as vonage_client
 
 # Create a Blueprint for all Vonage-related API routes that the UI will call
@@ -29,7 +32,7 @@ def get_subaccounts():
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
-        result, status_code = vonage_client.get_subaccounts(
+        result, status_code = vonage_client.list_subaccounts(
             primary_api_key=creds['api_key'],
             primary_api_secret=creds['api_secret'],
             log_enabled=log_enabled
@@ -40,35 +43,69 @@ def get_subaccounts():
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
+# --- START: MODIFICATION (Update create_subaccount logic) ---
 @vonage_bp.route('/subaccounts/create', methods=['POST'])
 def create_subaccount():
     data = request.get_json()
     try:
+        # We need the master key to save the new credential later
+        master_key = data.get('master_key')
+        if not master_key:
+            raise ValueError("Master Key is required to create and save a new subaccount.")
+            
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
+
+        # Generate a secret if the user left the field blank
+        secret = data.get('secret')
+        if not secret:
+            secret = generate_secure_secret()
 
         # Extract subaccount creation specific data
         payload = {
             "name": data.get('name'),
-            "secret": data.get('secret'),
+            "secret": secret,
             "use_primary_account_balance": data.get('use_primary_balance', True)
         }
         
+        # Call the Vonage client to create the subaccount
         result, status_code = vonage_client.create_subaccount(
             primary_api_key=creds['api_key'],
             primary_api_secret=creds['api_secret'],
             payload=payload,
             log_enabled=log_enabled
         )
-        # Add a clear message for the UI
+        
+        # If creation was successful, save the new credentials to our database
         if status_code < 400:
-            result['message'] = f"Successfully created subaccount '{result.get('name')}'."
+            new_sub_name = result.get('name')
+            new_sub_api_key = result.get('api_key')
+            
+            if new_sub_name and new_sub_api_key:
+                try:
+                    # Save the new credential using the name, new API key, and the secret we used
+                    credentials_manager.save_credential(
+                        name=new_sub_name,
+                        api_key=new_sub_api_key,
+                        api_secret=secret, # Use the same secret we sent to the API
+                        master_key=master_key
+                    )
+                    result['message'] = f"Successfully created subaccount '{new_sub_name}' and saved its credentials locally."
+                except Exception as e:
+                    # If saving fails, inform the user. The subaccount exists on Vonage's side.
+                    result['message'] = (f"WARNING: Successfully created subaccount '{new_sub_name}' via Vonage API, "
+                                       f"but FAILED to save its credentials locally. Please add them manually. Error: {str(e)}")
+                    # Change the status code to indicate a partial success/warning to the client
+                    status_code = 207 # Multi-Status
+            else:
+                result['message'] = "Subaccount created, but API response was missing name or API key. Could not save locally."
         
         return jsonify(result), status_code
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+# --- END: MODIFICATION ---
 
 @vonage_bp.route('/subaccounts/update', methods=['POST'])
 def update_subaccount():
