@@ -4,7 +4,6 @@ import os
 from threading import Lock
 from . import db_manager
 
-# --- START: MODIFICATION (Add Notification Settings) ---
 DEFAULT_SETTINGS = {
     'max_concurrent_requests': '5',
     'delay_between_batches_ms': '1000',
@@ -14,9 +13,11 @@ DEFAULT_SETTINGS = {
     'treat_420_as_success_configure': 'False',
     'notifications_enabled': 'False',
     'notifications_webhook_url': '',
-    'notifications_secret': ''
+    'notifications_secret': '',
+    # --- START: MODIFICATION ---
+    'notifications_content_type': 'application/json' # New setting
+    # --- END: MODIFICATION ---
 }
-# --- END: MODIFICATION ---
 
 # A simple in-memory cache for settings to reduce DB calls.
 settings_cache = {}
@@ -65,18 +66,15 @@ def save_settings(new_settings: dict):
     Saves a dictionary of settings to the database and updates the cache.
     """
     if STORAGE_MODE != 'db':
-        # In file mode, saving is a no-op as it's not supported.
         return
 
     with cache_lock:
         global settings_cache
         for key, value in new_settings.items():
-            # Ensure we only try to save keys that are defined in our defaults
             if key in DEFAULT_SETTINGS:
-                # Convert booleans to strings for consistent DB storage
                 str_value = str(value)
                 db_manager.db_save_setting(key, str_value)
-                settings_cache[key] = str_value # Update cache
+                settings_cache[key] = str_value
             else:
                 print(f"Warning: Attempted to save unknown setting '{key}'. Ignoring.")
 
