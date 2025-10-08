@@ -157,6 +157,7 @@ def find_and_decrypt_credential_by_groupid(groupid: str, master_key: str) -> dic
         raise ValueError(f"Decryption failed for groupid '{groupid}'. The master key may be incorrect.")
     return { 'api_key': credential_data.get('api_key'), 'api_secret': decrypted_secret, 'account_name': credential_data.get('name'), 'default_voice_callback_type': credential_data.get('default_voice_callback_type'), 'default_voice_callback_value': credential_data.get('default_voice_callback_value') }
 
+# --- START: MODIFICATION (Revert rekey function to its simple form) ---
 def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
     """
     Iterates through all credentials, decrypts them with the old key,
@@ -192,12 +193,10 @@ def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
 
     # Step 3: If there were failures, do NOT save anything to prevent data corruption.
     if results['failed']:
-        # The calling function in app.py will see the 'failed' list and return an error.
         return results
 
     # Step 4: If all were successful, atomically save the updated credentials.
     if STORAGE_MODE == 'db':
-        # For DB, we iterate and save each one individually.
         for name, data in updated_creds.items():
              db_manager.db_save_credential(
                 name, 
@@ -208,9 +207,9 @@ def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
                 data.get('default_voice_callback_value', '')
             )
     else:
-        # For file, we overwrite the entire file with the re-encrypted data.
         _file_save_all_credentials(updated_creds)
         
     return results
+# --- END: MODIFICATION ---
 
 # --- END OF FILE utils/credentials_manager.py ---
