@@ -60,7 +60,7 @@ def init_db():
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS app_settings (
                     setting_key VARCHAR(255) UNIQUE NOT NULL,
-                    setting_value VARCHAR(255)
+                    setting_value TEXT
                 )
             """)
             # --- END: MODIFICATION ---
@@ -106,7 +106,7 @@ def db_save_setting(key: str, value: str):
             ON DUPLICATE KEY UPDATE
                 setting_value = VALUES(setting_value)
         """
-        cursor.execute(query, (key, value))
+        cursor.execute(query, (key, str(value) if value is not None else None))
         conn.commit()
     except mariadb.Error as e:
         print(f"Error saving setting '{key}' to DB: {e}")
@@ -208,5 +208,4 @@ def db_find_credential_by_groupid_in_name(groupid: str):
     finally:
         if conn:
             conn.close()
-
 # --- END OF FILE utils/db_manager.py ---
