@@ -26,7 +26,12 @@ let appSettings = {
     notifications_enabled: false,
     notifications_webhook_url: '',
     notifications_secret: '',
-    notifications_content_type: 'application/json'
+    notifications_content_type: 'application/json',
+    // --- START: MODIFICATION ---
+    notifications_on_subaccount_created: false,
+    notifications_on_did_provisioned: false,
+    notifications_on_did_released: false
+    // --- END: MODIFICATION ---
 };
 
 
@@ -95,7 +100,7 @@ async function handleRekeyCredentials() {
     const oldKey = oldKeyInput.value;
     const newKey = newKeyInput.value;
 
-    statusList.innerHTML = '';
+    statusList.innerHTML = ''; 
 
     if (!oldKey || !newKey) {
         alert("Both the Old and New Master Keys are required.");
@@ -347,11 +352,14 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('treat420AsSuccess_configure').checked = String(appSettings.treat_420_as_success_configure).toLowerCase() === 'true';
         
         notifToggle.checked = String(appSettings.notifications_enabled).toLowerCase() === 'true';
-
         document.getElementById('notificationsWebhookUrl').value = appSettings.notifications_webhook_url || '';
         document.getElementById('notificationsSecret').value = appSettings.notifications_secret || '';
-        // --- START: MODIFICATION ---
         document.getElementById('notificationsContentType').value = appSettings.notifications_content_type || 'application/json';
+
+        // --- START: MODIFICATION ---
+        document.getElementById('notificationsOnSubaccountCreated').checked = String(appSettings.notifications_on_subaccount_created).toLowerCase() === 'true';
+        document.getElementById('notificationsOnDidProvisioned').checked = String(appSettings.notifications_on_did_provisioned).toLowerCase() === 'true';
+        document.getElementById('notificationsOnDidReleased').checked = String(appSettings.notifications_on_did_released).toLowerCase() === 'true';
         // --- END: MODIFICATION ---
         
         toggleNotificationDetails();
@@ -372,8 +380,11 @@ document.addEventListener('DOMContentLoaded', () => {
             notifications_enabled: document.getElementById('notificationsEnabledToggle').checked,
             notifications_webhook_url: document.getElementById('notificationsWebhookUrl').value,
             notifications_secret: document.getElementById('notificationsSecret').value,
+            notifications_content_type: document.getElementById('notificationsContentType').value,
             // --- START: MODIFICATION ---
-            notifications_content_type: document.getElementById('notificationsContentType').value
+            notifications_on_subaccount_created: document.getElementById('notificationsOnSubaccountCreated').checked,
+            notifications_on_did_provisioned: document.getElementById('notificationsOnDidProvisioned').checked,
+            notifications_on_did_released: document.getElementById('notificationsOnDidReleased').checked
             // --- END: MODIFICATION ---
         }; 
         try { 
