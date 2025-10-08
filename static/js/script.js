@@ -22,7 +22,10 @@ let appSettings = {
     store_logs_enabled: false,
     treat_420_as_success_buy: false,
     verify_on_420_buy: false,
-    treat_420_as_success_configure: false
+    treat_420_as_success_configure: false,
+    notifications_enabled: false,
+    notifications_webhook_url: '',
+    notifications_secret: ''
 };
 
 
@@ -201,9 +204,7 @@ async function handleFetchPsipDomains(event) {
         
         vonagePsipDomains = Array.isArray(data) ? data : [];
         
-        // --- START: MODIFICATION (Call the new render function) ---
         renderPsipDomains(); 
-        // --- END: MODIFICATION ---
 
         displayResponse(`Successfully fetched ${vonagePsipDomains.length} domains.`, 'success'); 
         listContainer.style.display = vonagePsipDomains.length > 0 ? 'block' : 'none'; 
@@ -211,7 +212,6 @@ async function handleFetchPsipDomains(event) {
         handleFetchError(error, 'Fetch PSIP Domains'); 
     } 
 }
-// --- START: MODIFICATION (Add the new render function) ---
 function renderPsipDomains() {
     const container = document.getElementById('vonage-psip-domain-list');
     const template = document.getElementById('vonage-psip-domain-template');
@@ -225,16 +225,14 @@ function renderPsipDomains() {
     vonagePsipDomains.forEach(domain => {
         const clone = template.content.cloneNode(true);
         
-        // Populate the summary part of the template
         clone.querySelector('.domain-name-display').textContent = domain.name;
         const typeDisplay = clone.querySelector('.domain-type-display');
         if (domain.domain_type) {
             typeDisplay.textContent = `(${domain.domain_type})`;
         } else {
-            typeDisplay.textContent = ''; // Hide if not present
+            typeDisplay.textContent = ''; 
         }
         
-        // Populate the full editable form inside the <details> section
         const form = clone.querySelector('.vonage-psip-domain-form');
         form.querySelector('.original-domain-name').value = domain.name;
         form.querySelector('.domain-name').value = domain.name;
@@ -249,7 +247,6 @@ function renderPsipDomains() {
         container.appendChild(clone);
     });
 }
-// --- END: MODIFICATION ---
 async function handlePsipDomainActions(event) { /* Stub for future implementation */ }
 async function handleVonageSearchSubmit(event) { event.preventDefault(); displayResponse('Searching for available numbers...', 'pending'); document.getElementById('search-results-area').style.display = 'none'; document.getElementById('purchase-controls').style.display = 'none'; try { const auth = getAuthPayload('vonage_search'); const payload = { ...auth, country: document.getElementById('vonage_search_country').value, type: document.getElementById('vonage_search_type').value, pattern: document.getElementById('vonage_search_pattern').value, search_pattern: document.getElementById('vonage_search_search_pattern').value, features: document.getElementById('vonage_search_features').value, }; const response = await apiFetch('/api/vonage/dids/search', { method: 'POST', body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Search failed'); renderSearchResults(data.numbers); } catch (error) { handleFetchError(error, 'DID Search'); } }
 function renderSearchResults(numbers) { const resultsArea = document.getElementById('search-results-area'); const container = document.getElementById('search-results-container').querySelector('ul'); const countEl = document.getElementById('search-count'); const purchaseButton = document.getElementById('vonage_purchase_button'); container.innerHTML = ''; if (!numbers || numbers.length === 0) { countEl.textContent = '0'; container.innerHTML = '<li>No numbers found matching your criteria.</li>'; resultsArea.style.display = 'block'; purchaseButton.disabled = true; return; } countEl.textContent = numbers.length; numbers.forEach(num => { const li = document.createElement('li'); const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'did-checkbox'; checkbox.value = num.msisdn; checkbox.dataset.country = document.getElementById('vonage_search_country').value.toUpperCase(); const label = document.createElement('label'); label.appendChild(checkbox); label.append(` ${num.msisdn} - Features: ${num.features.join(', ')} - Cost: ${num.cost}`); li.appendChild(label); container.appendChild(li); }); resultsArea.style.display = 'block'; document.getElementById('purchase-controls').style.display = 'block'; updateSelectedCount(); }
@@ -319,10 +316,87 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Settings & Log Listeners
     const settingsModal = document.getElementById('settingsModal');
-    document.getElementById('settingsGearIcon')?.addEventListener('click', async () => { try { const response = await apiFetch('/api/settings'); const latestSettings = await response.json(); if (response.ok) { appSettings = { ...appSettings, ...latestSettings }; } else { throw new Error(latestSettings.error || "Failed to fetch settings"); } } catch (error) { console.error("Could not fetch latest settings:", error); displayResponse(`Error: Could not load settings from database. Displaying last known values.`, 'error'); } document.getElementById('maxConcurrentRequests').value = appSettings.max_concurrent_requests; document.getElementById('delayBetweenBatches').value = appSettings.delay_between_batches_ms; document.getElementById('storeLogsToggle').checked = appSettings.store_logs_enabled; document.getElementById('treat420AsSuccess_buy').checked = appSettings.treat_420_as_success_buy; document.getElementById('verifyOn420_buy').checked = appSettings.verify_on_420_buy; document.getElementById('treat420AsSuccess_configure').checked = appSettings.treat_420_as_success_configure; settingsModal.style.display = 'block'; });
+    const notifToggle = document.getElementById('notificationsEnabledToggle');
+    const notifDetails = document.getElementById('notificationSettingsDetails');
+
+    const toggleNotificationDetails = () => {
+        notifDetails.style.display = notifToggle.checked ? 'block' : 'none';
+    };
+
+    notifToggle.addEventListener('change', toggleNotificationDetails);
+
+    document.getElementById('settingsGearIcon')?.addEventListener('click', async () => { 
+        try { 
+            const response = await apiFetch('/api/settings'); 
+            const latestSettings = await response.json(); 
+            if (response.ok) { 
+                appSettings = { ...appSettings, ...latestSettings }; 
+            } else { 
+                throw new Error(latestSettings.error || "Failed to fetch settings"); 
+            } 
+        } catch (error) { 
+            console.error("Could not fetch latest settings:", error); 
+            displayResponse(`Error: Could not load settings from database. Displaying last known values.`, 'error'); 
+        } 
+        document.getElementById('maxConcurrentRequests').value = appSettings.max_concurrent_requests; 
+        document.getElementById('delayBetweenBatches').value = appSettings.delay_between_batches_ms; 
+        
+        // --- START: MODIFICATION (Fix boolean conversion) ---
+        document.getElementById('storeLogsToggle').checked = String(appSettings.store_logs_enabled).toLowerCase() === 'true';
+        document.getElementById('treat420AsSuccess_buy').checked = String(appSettings.treat_420_as_success_buy).toLowerCase() === 'true';
+        document.getElementById('verifyOn420_buy').checked = String(appSettings.verify_on_420_buy).toLowerCase() === 'true';
+        document.getElementById('treat420AsSuccess_configure').checked = String(appSettings.treat_420_as_success_configure).toLowerCase() === 'true';
+        
+        notifToggle.checked = String(appSettings.notifications_enabled).toLowerCase() === 'true';
+        // --- END: MODIFICATION ---
+
+        document.getElementById('notificationsWebhookUrl').value = appSettings.notifications_webhook_url || '';
+        document.getElementById('notificationsSecret').value = appSettings.notifications_secret || '';
+        
+        toggleNotificationDetails();
+        settingsModal.style.display = 'block'; 
+    });
+
     document.getElementById('settingsModalClose')?.addEventListener('click', () => { settingsModal.style.display = 'none' });
     document.getElementById('cancelSettingsButton')?.addEventListener('click', () => { settingsModal.style.display = 'none' });
-    document.getElementById('saveSettingsButton')?.addEventListener('click', async () => { const newSettings = { max_concurrent_requests: parseInt(document.getElementById('maxConcurrentRequests').value, 10), delay_between_batches_ms: parseInt(document.getElementById('delayBetweenBatches').value, 10), store_logs_enabled: document.getElementById('storeLogsToggle').checked, treat_420_as_success_buy: document.getElementById('treat420AsSuccess_buy').checked, verify_on_420_buy: document.getElementById('verifyOn420_buy').checked, treat_420_as_success_configure: document.getElementById('treat420AsSuccess_configure').checked, }; try { const response = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(newSettings) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Failed to save"); appSettings = { ...appSettings, ...newSettings }; settingsModal.style.display = 'none'; displayResponse('Settings saved to database!', 'success'); } catch (error) { console.error("Failed to save settings:", error); displayResponse(`Error saving settings: ${error.message}`, 'error'); } });
+    
+    document.getElementById('saveSettingsButton')?.addEventListener('click', async () => { 
+        const newSettings = { 
+            max_concurrent_requests: parseInt(document.getElementById('maxConcurrentRequests').value, 10), 
+            delay_between_batches_ms: parseInt(document.getElementById('delayBetweenBatches').value, 10), 
+            store_logs_enabled: document.getElementById('storeLogsToggle').checked, 
+            treat_420_as_success_buy: document.getElementById('treat420AsSuccess_buy').checked, 
+            verify_on_420_buy: document.getElementById('verifyOn420_buy').checked, 
+            treat_420_as_success_configure: document.getElementById('treat420AsSuccess_configure').checked,
+            notifications_enabled: document.getElementById('notificationsEnabledToggle').checked,
+            notifications_webhook_url: document.getElementById('notificationsWebhookUrl').value,
+            notifications_secret: document.getElementById('notificationsSecret').value,
+        }; 
+        try { 
+            const response = await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(newSettings) }); 
+            const data = await response.json(); 
+            if (!response.ok) throw new Error(data.error || "Failed to save"); 
+            appSettings = { ...appSettings, ...newSettings }; 
+            settingsModal.style.display = 'none'; 
+            displayResponse('Settings saved to database!', 'success'); 
+        } catch (error) { 
+            console.error("Failed to save settings:", error); 
+            displayResponse(`Error saving settings: ${error.message}`, 'error'); 
+        } 
+    });
+    
+    document.getElementById('testWebhookButton')?.addEventListener('click', async () => {
+        displayResponse('Sending test webhook...', 'pending');
+        try {
+            const response = await apiFetch('/api/notifications/test', { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "Failed to send test notification.");
+            displayResponse(data.message, 'success');
+        } catch (error) {
+            handleFetchError(error, 'Test Webhook');
+        }
+    });
+
     document.getElementById('treat420AsSuccess_buy')?.addEventListener('change',e=>{if(e.target.checked)document.getElementById('verifyOn420_buy').checked=false;});document.getElementById('verifyOn420_buy')?.addEventListener('change',e=>{if(e.target.checked)document.getElementById('treat420AsSuccess_buy').checked=false;});
     document.getElementById('downloadLogsButton')?.addEventListener('click',()=>{window.location.href='/api/logs/download';});document.getElementById('clearLogsButton')?.addEventListener('click',()=>{if(confirm('Delete all server logs?')){apiFetch('/api/logs/clear',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.error)displayResponse(`Error: ${d.error}`,'error');else displayResponse('Logs cleared.','success');}).catch(e=>displayResponse(`Failed: ${e.message}`,'error'));}});
     const countryModal=document.getElementById('countryCodesModal');document.querySelectorAll('.showCountryCodesBtn').forEach(btn => btn.addEventListener('click', () => { countryModal.style.display='block'; }));document.getElementById('countryCodesModalClose')?.addEventListener('click',()=>{countryModal.style.display='none';});window.addEventListener('click',e=>{if(e.target===settingsModal)settingsModal.style.display='none';if(e.target===countryModal)countryModal.style.display='none';});
