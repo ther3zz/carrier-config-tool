@@ -3,11 +3,9 @@
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
-# --- START: MODIFICATION ---
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware # Correct import path
-# --- END: MODIFICATION ---
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 
 # --- Import Core Application Logic ---
@@ -65,7 +63,7 @@ def _get_national_number(msisdn: str, country: str) -> str:
         return msisdn[1:]
     return msisdn
 
-# --- Pydantic Data Models (Unchanged) ---
+# --- Pydantic Data Models ---
 class DIDProvisionRequest(BaseModel):
     groupid: str = Field(..., description="The unique group ID to match against a subaccount name.")
     npa: str = Field(..., description="The 3-digit NPA (Numbering Plan Area) to search for a DID in.", min_length=3, max_length=3, pattern=r'^\d{3}$')
@@ -97,6 +95,36 @@ class ReleaseResponse(BaseModel):
     released_did: str
     subaccount_name: str
 
+# --- START: MODIFICATION (Add models for DID Update) ---
+class DIDUpdateRequest(BaseModel):
+    groupid: str = Field(..., description="The unique group ID to match against the subaccount that owns the DID.")
+    did: str = Field(..., description="The phone number (DID) to be updated.", pattern=r'^\d{10,15}$')
+    country: Optional[str] = Field(None, description="Optional. The 2-letter ISO country code of the DID (e.g., 'US', 'CA'). If omitted, the system will attempt to auto-detect the country for US/CA numbers.", min_length=2, max_length=2)
+    voice_callback_type: Optional[str] = Field(None, description="The voice callback type to set (e.g., 'sip', 'tel'). To unset a callback, provide an empty string ''.")
+    voice_callback_value: Optional[str] = Field(None, description="The voice callback value to set (e.g., 'sbc.domain.com'). To unset a callback, provide an empty string ''.")
+
+    @field_validator('country')
+    def uppercase_country_code(cls, v):
+        if v is not None: return v.upper()
+        return v
+    
+    @model_validator(mode='after')
+    def check_callback_fields(self):
+        """Ensure that if one callback field is provided, the other is too."""
+        type_provided = self.voice_callback_type is not None
+        value_provided = self.voice_callback_value is not None
+        if type_provided != value_provided:
+            raise ValueError("Both 'voice_callback_type' and 'voice_callback_value' must be provided together, or both must be omitted.")
+        return self
+
+class DIDUpdateResponse(BaseModel):
+    status: str = "success"
+    message: str
+    updated_did: str
+    subaccount_name: str
+    applied_configuration: dict
+# --- END: MODIFICATION ---
+
 # --- API Endpoints ---
 @app.on_event("startup")
 async def startup_event():
@@ -114,7 +142,7 @@ async def startup_event():
     if credentials_manager.STORAGE_MODE == 'db' and not VONAGE_PRIMARY_ACCOUNT_NAME:
         print("WARNING: `VONAGE_PRIMARY_ACCOUNT_NAME` is not set. The auto-create subaccount feature will be disabled.")
 
-# --- The rest of the file is unchanged. ---
+
 @app.post("/provision-did", response_model=ProvisioningResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Request):
     # (Function unchanged)
@@ -169,6 +197,80 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
         else: configuration_status = f"Failed to apply settings from {source_of_config}: {update_result.get('error', 'Unknown error')}"
     else: configuration_status = "Skipped: No settings provided in request and no defaults configured for this group."
     return ProvisioningResponse(message=f"Successfully provisioned DID {msisdn} for groupid '{request.groupid}'.", provisioned_did=msisdn, country=country, subaccount_name=subaccount_creds['account_name'], subaccount_api_key=subaccount_creds['api_key'], configuration_status=configuration_status)
+
+# --- START: MODIFICATION (Add new endpoint for updating DIDs) ---
+@app.post("/update-did", response_model=DIDUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
+async def update_did_endpoint(request: DIDUpdateRequest, request_obj: Request):
+    """
+    Updates the configuration of an existing DID for a specific subaccount.
+    """
+    if credentials_manager.STORAGE_MODE != 'db':
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
+    
+    log_enabled = settings_manager.get_setting('store_logs_enabled')
+
+    try:
+        subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
+
+    # --- Determine Country (reuse logic from release endpoint) ---
+    country_to_use = request.country
+    msisdn_to_use = "".join(filter(str.isdigit, request.did))
+    if not country_to_use:
+        national_number = msisdn_to_use[-10:]
+        if len(national_number) == 10:
+            npa = national_number[:3]
+            if npa in NPA_DATA.get('US', []): country_to_use = 'US'
+            elif npa in NPA_DATA.get('CA', []): country_to_use = 'CA'
+            if country_to_use and not msisdn_to_use.startswith('1'): msisdn_to_use = '1' + national_number
+        if not country_to_use:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not auto-detect country from DID. Please provide a 2-letter 'country' code for non-US/CA numbers.")
+
+    if log_enabled:
+        logger.log_request_response(
+            operation_name="Incoming DID Update Request",
+            request_details={"client_ip": request_obj.client.host, "payload": request.model_dump()},
+            response_data={"status": "Request accepted for processing", "determined_country": country_to_use},
+            status_code=202,
+            account_id=subaccount_creds['api_key']
+        )
+
+    # --- Build the update payload for Vonage ---
+    update_config = {}
+    if request.voice_callback_type is not None and request.voice_callback_value is not None:
+        update_config['voiceCallbackType'] = request.voice_callback_type
+        
+        # Handle SIP URI formatting for convenience
+        final_callback_value = request.voice_callback_value
+        if request.voice_callback_type == 'sip' and '@' not in final_callback_value and final_callback_value != '':
+             final_callback_value = f"{_get_national_number(msisdn_to_use, country_to_use)}@{final_callback_value}"
+        update_config['voiceCallbackValue'] = final_callback_value
+    
+    if not update_config:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update parameters provided. Please specify fields to update, e.g., 'voice_callback_type'.")
+
+    # --- Call the Vonage client ---
+    update_result, update_status = vonage_client.update_did(
+        username=subaccount_creds['api_key'],
+        password=subaccount_creds['api_secret'],
+        country=country_to_use,
+        msisdn=msisdn_to_use,
+        config=update_config,
+        log_enabled=log_enabled,
+        treat_420_as_success=settings_manager.get_setting('treat_420_as_success_configure')
+    )
+
+    if update_status >= 400:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to update DID {request.did}. Vonage API error: {update_result.get('error', 'Unknown error')}")
+
+    return DIDUpdateResponse(
+        message=f"Successfully updated DID {request.did} for groupid '{request.groupid}'.",
+        updated_did=request.did,
+        subaccount_name=subaccount_creds['account_name'],
+        applied_configuration=update_config
+    )
+# --- END: MODIFICATION ---
 
 @app.post("/release-did", response_model=ReleaseResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def release_did_endpoint(request: DIDReleaseRequest, request_obj: Request):
