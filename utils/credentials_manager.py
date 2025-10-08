@@ -157,7 +157,6 @@ def find_and_decrypt_credential_by_groupid(groupid: str, master_key: str) -> dic
         raise ValueError(f"Decryption failed for groupid '{groupid}'. The master key may be incorrect.")
     return { 'api_key': credential_data.get('api_key'), 'api_secret': decrypted_secret, 'account_name': credential_data.get('name'), 'default_voice_callback_type': credential_data.get('default_voice_callback_type'), 'default_voice_callback_value': credential_data.get('default_voice_callback_value') }
 
-# --- START: MODIFICATION (Add Re-Keying Logic) ---
 def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
     """
     Iterates through all credentials, decrypts them with the old key,
@@ -213,6 +212,5 @@ def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
         _file_save_all_credentials(updated_creds)
         
     return results
-# --- END: MODIFICATION ---
 
 # --- END OF FILE utils/credentials_manager.py ---
