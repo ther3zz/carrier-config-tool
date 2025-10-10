@@ -1,0 +1,125 @@
+<!-- START OF FILE templates/partials/_settings_modal.html -->
+<div id="settingsModal" class="settings-modal">
+    <div class="settings-modal-content">
+        <div class="settings-modal-header">
+            <h2>Application Settings</h2>
+            <span class="settings-modal-close" id="settingsModalClose">×</span>
+        </div>
+        <div class="settings-modal-body">
+            
+            <h4>API Request Settings</h4>
+            <p>These settings control how batch API requests are made to vendors.</p>
+            <div class="settings-form-group">
+                <label for="maxConcurrentRequests">Max Concurrent Requests:</label>
+                <input type="number" id="maxConcurrentRequests" name="maxConcurrentRequests" min="1" max="20" value="5">
+                <small>Number of requests to send in parallel for operations like bulk purchase or multi-DID modification (e.g., 1-10).</small>
+            </div>
+            <div class="settings-form-group">
+                <label for="delayBetweenBatches">Delay Between Batches (ms):</label>
+                <input type="number" id="delayBetweenBatches" name="delayBetweenBatches" min="0" step="100" value="1000">
+                <small>Time in milliseconds to wait after a batch of concurrent requests completes before starting the next batch (e.g., 500-2000ms).</small>
+            </div>
+            
+            <hr class="settings-divider">
+
+            <h4>General Settings</h4>
+            <div class="settings-form-group">
+                <label>Store Debugging Logs:</label>
+                <div class="toggle-container" style="justify-content: flex-start;">
+                    <label class="toggle">
+                        <input type="checkbox" id="storeLogsToggle">
+                        <span class="slider"></span>
+                    </label>
+                    <span style="margin-left: 10px; font-size: 0.9em;">Enable to write API requests/responses to a server log file.</span>
+                </div>
+            </div>
+
+            <div class="settings-form-group">
+                <label>HTTP 420 (Rate Limit) Handling:</label>
+                <div class="setting-item-subgroup">
+                    <input type="checkbox" id="treat420AsSuccess_buy">
+                    <label for="treat420AsSuccess_buy"><strong>Buy:</strong> Treat as success (no verification)</label>
+                </div>
+                <div class="setting-item-subgroup">
+                    <input type="checkbox" id="verifyOn420_buy">
+                    <label for="verifyOn420_buy"><strong>Buy:</strong> Verify ownership after 420 error</label>
+                </div>
+                <div class="setting-item-subgroup">
+                    <input type="checkbox" id="treat420AsSuccess_configure">
+                    <label for="treat420AsSuccess_configure"><strong>Configure/Update:</strong> Treat as success</label>
+                </div>
+                <small>Controls behavior when a rate limit error is received. "Verify" will perform an extra check to confirm if a purchase succeeded despite the error.</small>
+            </div>
+
+            <hr class="settings-divider">
+            <h4>Webhook Notifications</h4>
+            <div class="settings-form-group">
+                <label>Enable Notifications (Master Switch):</label>
+                <div class="toggle-container" style="justify-content: flex-start;">
+                    <label class="toggle">
+                        <input type="checkbox" id="notificationsEnabledToggle">
+                        <span class="slider"></span>
+                    </label>
+                    <span style="margin-left: 10px; font-size: 0.9em;">Send a webhook for key events.</span>
+                </div>
+            </div>
+            <div id="notificationSettingsDetails">
+                <div class="settings-form-group">
+                    <label for="notificationsWebhookUrl">Webhook URL:</label>
+                    <input type="url" id="notificationsWebhookUrl" name="notificationsWebhookUrl" placeholder="https://yourapi.com/webhook/receiver">
+                    <small>The endpoint where the notification payload will be sent.</small>
+                </div>
+                <div class="settings-form-group">
+                    <label for="notificationsContentType">Payload Format (Content-Type):</label>
+                    <select id="notificationsContentType" name="notificationsContentType">
+                        <option value="application/json">JSON (application/json)</option>
+                        <option value="application/x-www-form-urlencoded">Form Post (x-www-form-urlencoded)</option>
+                    </select>
+                    <small>Select 'Form Post' for endpoints that cannot parse JSON. Nested data will be sent as a JSON string.</small>
+                </div>
+                <div class="settings-form-group">
+                    <label for="notificationsSecret">Signing Secret (Optional):</label>
+                    <input type="password" id="notificationsSecret" name="notificationsSecret" placeholder="Leave blank if not needed">
+                    <small>If provided, a SHA256 signature will be sent in the 'X-Webhook-Signature-256' header.</small>
+                </div>
+                
+                <div class="settings-form-group">
+                    <label>Events to Send:</label>
+                    <div class="setting-item-subgroup">
+                        <input type="checkbox" id="notificationsOnSubaccountCreated">
+                        <label for="notificationsOnSubaccountCreated">Subaccount Created</label>
+                    </div>
+                    <div class="setting-item-subgroup">
+                        <input type="checkbox" id="notificationsOnDidProvisioned">
+                        <label for="notificationsOnDidProvisioned">DID Provisioned</label>
+                    </div>
+                    <div class="setting-item-subgroup">
+                        <input type="checkbox" id="notificationsOnDidReleased">
+                        <label for="notificationsOnDidReleased">DID Released</label>
+                    </div>
+                </div>
+
+                 <div class="settings-form-group">
+                    <button type="button" id="testWebhookButton" class="action-button preview-button">Send Test Notification</button>
+                </div>
+            </div>
+
+            <hr class="settings-divider">
+
+            <h4>Log Management</h4>
+            <div class="settings-form-group">
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" id="downloadLogsButton" class="action-button">Download Logs</button>
+                    <button type="button" id="clearLogsButton" class="action-button danger-button">Clear Server Logs</button>
+                </div>
+                <small>Download all log files as a .zip archive or clear all logs on the server.</small>
+            </div>
+
+        </div>
+        <div class="settings-modal-footer">
+            <button type="button" id="cancelSettingsButton" class="cancel-settings-btn">Cancel</button>
+            <button type="button" id="saveSettingsButton" class="save-settings-btn">Save Settings</button>
+        </div>
+    </div>
+</div>
+<!-- END OF FILE templates/partials/_settings_modal.html -->
