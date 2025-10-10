@@ -1,0 +1,40 @@
+<!-- START OF FILE templates/partials/_vonage_subaccount_management.html -->
+<details id="vonageSubaccountAccordion">
+    <summary>Subaccount Management</summary>
+    <div class="action-content has-inner-tabs">
+        <div class="inner-tabs">
+            <div class="inner-tab-link active" onclick="openInnerTab(event, 'manage-subaccounts', this)">Manage Subaccounts</div>
+            <div class="inner-tab-link" onclick="openInnerTab(event, 'create-subaccount', this)">Create Subaccount</div>
+        </div>
+        <div id="manage-subaccounts" class="inner-tab-content active">
+            <div style="padding: 0 20px 20px 20px;">
+                <h3>Manage Existing Subaccounts</h3>
+                <form id="vonageFetchSubaccountsForm">
+                    <p>Select the <strong>Primary Account's</strong> credentials to fetch all associated subaccounts.</p>
+                    <div class="credential-selector-container" data-id-prefix="vonage_manage_subaccounts"></div>
+                    <button type="submit">Fetch Subaccounts</button>
+                </form>
+                <hr style="margin: 30px 0;">
+                <div id="vonage-subaccount-list-container" style="display: none;">
+                    <h4>Found Subaccounts:</h4>
+                    <div id="vonage-subaccount-list"></div>
+                </div>
+            </div>
+        </div>
+        <div id="create-subaccount" class="inner-tab-content">
+            <div style="padding: 0 20px 20px 20px;">
+                <h3>Create a New Subaccount</h3>
+                <form id="vonageCreateSubaccountForm">
+                    <p>Select the <strong>Primary Account's</strong> credentials and enter the details for the new subaccount.</p>
+                    <div class="credential-selector-container" data-id-prefix="vonage_create_subaccount"></div>
+                    <hr style="margin: 20px 0;">
+                    <div class="form-group"> <label for="vonage_new_subaccount_name">New Subaccount Name:</label> <input type="text" id="vonage_new_subaccount_name" required> </div>
+                    <div class="form-group"> <label for="vonage_new_subaccount_secret">New Subaccount Secret (Optional):</label> <input type="text" id="vonage_new_subaccount_secret" placeholder="Leave blank for auto-generation"> </div>
+                    <div class="form-group"> <label>Use Primary Account Balance:</label> <div class="toggle-container" style="justify-content: flex-start;"> <label class="toggle"> <input type="checkbox" id="vonage_new_subaccount_use_primary_balance" checked> <span class="slider"></span> </label> <span id="vonage_new_subaccount_use_primary_balance_status" style="margin-left: 10px;">On</span> </div> </div>
+                    <button type="submit">Create Subaccount</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</details>
+<!-- END OF FILE templates/partials/_vonage_subaccount_management.html -->

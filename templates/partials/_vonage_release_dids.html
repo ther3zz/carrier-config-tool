@@ -1,0 +1,42 @@
+<!-- START OF FILE templates/partials/_vonage_release_dids.html -->
+<details id="vonageReleaseDidAccordion">
+    <summary>Release DIDs</summary>
+    <div class="action-content">
+        <h3>Release Vonage DIDs</h3>
+        <p>Release existing DIDs from an account. This action is permanent and cannot be undone.</p>
+         <p style="font-size: 0.9em; color: #666;"><i>Request rate/concurrency can be adjusted via the ⚙ settings icon in the page header.</i></p>
+        <form id="vonageReleaseDidForm">
+            <h4>API Credentials & Target DIDs</h4>
+            <div class="credential-selector-container" data-id-prefix="vonageRelease"></div>
+            <div class="form-group">
+                <label>Country Mode:</label>
+                <div class="toggle-container" style="justify-content: flex-start;">
+                    <label class="toggle">
+                        <input type="checkbox" id="vonageRelease_country_mode_toggle">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="country-mode-status" style="margin-left: 10px; font-weight:bold;">US/CA (Auto-Detect)</span>
+                </div>
+                <small>Toggle on to manually specify a country code for all DIDs in the textarea below.</small>
+                <div id="vonageRelease_country_other_container" style="display: none; margin-top: 10px;">
+                    <label for="vonageRelease_country_other_input">Country Code:</label>
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                        <input type="text" id="vonageRelease_country_other_input" maxlength="2" placeholder="e.g., GB" pattern="[A-Za-z]{2}" title="2-letter country code" style="flex-grow: 1;">
+                        <button type="button" class="info-button showCountryCodesBtn" title="View Country Codes">?</button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="vonageRelease_msisdns">DIDs (One per line):</label>
+                <textarea id="vonageRelease_msisdns" placeholder="19545550100&#10;447700900000&#10;9055550101" rows="5" required></textarea>
+            </div>
+            <button type="submit" class="danger-button">Release DID(s)</button>
+            <button type="button" id="stop_release_button" class="stop-button" style="display: none;">Stop Release</button>
+        </form>
+         <div id="vonageReleaseDidStatusArea" style="margin-top: 20px; display: none;">
+            <h4>Release Status per DID:</h4>
+            <ul id="vonageReleaseDidStatusList" style="list-style-type: none; padding-left: 0;"></ul>
+        </div>
+    </div>
+</details>
+<!-- END OF FILE templates/partials/_vonage_release_dids.html -->

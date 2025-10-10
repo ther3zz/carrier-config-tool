@@ -1,0 +1,50 @@
+<!-- START OF FILE templates/partials/_templates.html -->
+<template id="vonage-subaccount-template"><div class="subaccount-item"><details><summary><strong class="subaccount-name-display"></strong><span class="subaccount-key-display"></span><span class="subaccount-status-tag"></span></summary><div class="subaccount-content"><form class="vonage-subaccount-form"><input type="hidden" class="subaccount-api-key"><div class="form-group-grid"><div class="form-group"> <label>API Key:</label> <input type="text" class="api-key" readonly> </div><div class="form-group"> <label>Created At:</label> <input type="text" class="created-at" readonly> </div><div class="form-group"> <label>Balance:</label> <input type="text" class="balance" readonly> </div><div class="form-group"> <label>Credit Limit:</label> <input type="text" class="credit-limit" readonly> </div></div><hr><p><strong>Editable Fields:</strong></p><div class="form-group-grid"><div class="form-group"> <label>Subaccount Name:</label> <input type="text" class="subaccount-name"> </div><div class="form-group"><label>Suspended:</label><div class="toggle-container" style="justify-content: flex-start;"><label class="toggle"> <input type="checkbox" class="suspended"> <span class="slider"></span> </label><span class="suspended-status"></span></div></div><div class="form-group"><label>Use Primary Account Balance:</label><div class="toggle-container" style="justify-content: flex-start;"><label class="toggle"> <input type="checkbox" class="use-primary-balance"> <span class="slider"></span> </label><span class="use-primary-balance-status"></span></div></div></div><div class="button-group" style="margin-top: 15px;"><button type="button" class="save-subaccount-changes-btn configure-button">Save Changes</button><button type="button" class="cancel-subaccount-edit-btn preview-button">Cancel</button></div></form></div></details></div></template>
+<template id="vonage-psip-domain-template"><div class="psip-domain-item"><details><summary><strong class="domain-name-display"></strong><span class="domain-type-display"></span></summary><div class="psip-domain-content"><form class="vonage-psip-domain-form"><input type="hidden" class="original-domain-name"><div class="form-group"> <label>Name:</label> <input type="text" class="domain-name" required> </div><div class="form-group"> <label>Trunk Name:</label> <input type="text" class="trunk-name" required> </div><div class="form-group"> <label>TLS:</label> <select class="tls" required> <option value="optional">Optional</option> <option value="required">Required</option> <option value="disabled">Disabled</option> </select> </div><div class="form-group"> <label>Digest Authentication:</label> <div class="toggle-container"> <label class="toggle"> <input type="checkbox" class="digest-auth"> <span class="slider"></span> </label> <span class="digest-auth-status">Off</span> </div> </div><div class="form-group"> <label>SRTP:</label> <select class="srtp" required> <option value="optional">Optional</option> <option value="required">Required</option> <option value="disabled">Disabled</option> </select> </div><div class="form-group"> <label>ACL (One IP per line):</label> <textarea class="acl" rows="4"></textarea> </div><div class="form-group"> <label>Domain Type:</label> <input type="text" class="domain-type" required> </div><div class="button-group" style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px;"><button type="button" class="save-psip-changes-btn configure-button">Save Changes</button><button type="button" class="delete-psip-domain-btn danger-button">Delete Domain</button><button type="button" class="cancel-psip-edit-btn preview-button">Cancel</button></div></form></div></details></div></template>
+<template id="credential-item-template">
+    <div class="credential-item">
+        <details>
+            <summary>
+                <strong class="credential-name-display"></strong>
+                <span class="credential-key-hint"></span>
+            </summary>
+            <div class="credential-content">
+                <form class="credential-edit-form">
+                    <input type="hidden" class="original-credential-name">
+                    <div class="form-group"> <label>Friendly Name:</label> <input type="text" class="edit-credential-name" required> </div>
+                    <div class="form-group"> <label>API Key / Username:</label> <input type="text" class="edit-credential-api-key" required> </div>
+                    <div class="form-group"> <label>New API Secret / Password:</label> <input type="password" class="edit-credential-api-secret" placeholder="Required to save any changes"> </div>
+                    <hr class="settings-divider">
+                    <p style="font-weight: bold; margin-bottom: 10px;">Default Provisioning Settings</p>
+                    <div class="form-group">
+                        <label>Default Voice Callback Type:</label>
+                        <select class="edit-credential-callback-type"> <option value="">-- None --</option> <option value="sip">sip</option> <option value="tel">tel</option> </select>
+                    </div>
+                    <div class="form-group"> <label>Default Voice Callback Value:</label> <input type="text" class="edit-credential-callback-value" placeholder="e.g., sbc.domain.com"> </div>
+                    <div class="button-group" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button type="button" class="save-credential-changes-btn configure-button">Save Changes</button>
+                        <button type="button" class="delete-credential-btn danger-button">Delete</button>
+                        <button type="button" class="cancel-credential-edit-btn preview-button">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </details>
+    </div>
+</template>
+<template id="credential-selector-template">
+    <div class="form-group">
+        <label class="credential-selector-label" for="">Select Account:</label>
+        <input type="hidden" class="credential-selector-value">
+        <div class="custom-select-wrapper">
+            <div class="custom-select-trigger"> <span>-- Load Credentials First --</span> <div class="arrow"></div> </div>
+            <div class="custom-options">
+                <div class="custom-option filter-option"> <input type="text" class="credential-filter-input" placeholder="Filter accounts..." onclick="event.stopPropagation();"> </div>
+            </div>
+        </div>
+    </div>
+    <div class="credential-manual-entry" style="display: none;">
+        <div class="form-group"> <label class="credential-username-label" for="">API Key / Username:</label> <input type="text" class="credential-username-input"> </div>
+        <div class="form-group"> <label class="credential-password-label" for="">API Secret / Password:</label> <input type="password" class="credential-password-input"> </div>
+    </div>
+</template>
+<!-- END OF FILE templates/partials/_templates.html -->

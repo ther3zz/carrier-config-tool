@@ -1,0 +1,56 @@
+<!-- START OF FILE templates/partials/_vonage_modify_dids.html -->
+<details id="vonageModifyDidAccordion">
+    <summary>Modify Existing DID Configuration</summary>
+    <div class="action-content">
+        <h3>Modify Vonage DIDs</h3>
+        <p>Update existing DID configurations using either Manual Entry for a single account or CSV Upload for multiple accounts and configurations.</p>
+        <p style="font-size: 0.9em; color: #666;"><i>Request rate/concurrency can be adjusted via the ⚙ settings icon in the page header.</i></p>
+        <form id="vonageModifyDidForm">
+            <h4>Input Method</h4>
+            <div class="form-group"> <div class="toggle-container" style="justify-content: flex-start;"> <label class="toggle"> <input type="checkbox" id="vonageModify_mode_toggle"> <span class="slider"></span> </label> <span id="vonageModify_mode_status" style="margin-left: 10px; font-weight:bold;">Manual Entry</span> </div> </div>
+            <div id="vonageModify_csv_section" style="display: none;">
+                <div class="form-group"> <label for="vonageModify_csv_upload">Upload CSV File:</label> <input type="file" id="vonageModify_csv_upload" accept=".csv"> </div>
+                <div class="csv-instruction-block">
+                    <p>The CSV file allows for precise, per-row configuration.</p>
+                    <b>Required Headers:</b> <div class="csv-header-list"> <div class="csv-header-tag">msisdn</div> <div class="csv-header-tag">country</div> <div class="csv-header-tag">api_key</div> <div class="csv-header-tag">api_secret</div> </div>
+                    <b>Optional Headers:</b> <div class="csv-header-list"> <div class="csv-header-tag">app_id</div> <div class="csv-header-tag">moHttpUrl</div> <div class="csv-header-tag">voiceCallbackType</div> <div class="csv-header-tag">voiceCallbackValue</div> <div class="csv-header-tag">...etc.</div> </div>
+                    <b>Behavior:</b> <ul> <li>To use US/CA auto-detection for a number, leave its `country` cell blank.</li> <li>If an optional header (e.g., `app_id`) is present and a row has a value for it, that value is used for that DID.</li> <li>If a cell for an optional parameter is <b>blank</b>, the tool will use the corresponding value from the "Configuration Parameters" section below (if that toggle is enabled).</li> </ul>
+                    <b>Example:</b><br> <code>msisdn,country,api_key,api_secret,app_id,voiceCallbackValue<br>19545550100,,key1,secret1,aaaa-aaaa,sbc.domain.com<br>447700900000,GB,key2,secret2,,sip:user2@domain.com<br>13055550101,US,key1,secret1,bbbb-bbbb,</code>
+                </div>
+            </div>
+            <div id="vonageModify_manual_section">
+                <h4>API Credentials & Target DIDs</h4>
+                <div class="credential-selector-container" data-id-prefix="vonageModify"></div>
+                <div class="form-group">
+                    <label>Country Mode:</label>
+                    <div class="toggle-container" style="justify-content: flex-start;"> <label class="toggle"> <input type="checkbox" id="vonageModify_country_mode_toggle"> <span class="slider"></span> </label> <span class="country-mode-status" style="margin-left: 10px; font-weight:bold;">US/CA (Auto-Detect)</span> </div>
+                    <small>Toggle on to manually specify a country code for all DIDs in the textarea below.</small>
+                    <div id="vonageModify_country_other_container" style="display: none; margin-top: 10px;">
+                        <label for="vonageModify_country_other_input">Country Code:</label>
+                        <div style="display: flex; align-items: center; gap: 5px;"> <input type="text" id="vonageModify_country_other_input" maxlength="2" placeholder="e.g., GB" pattern="[A-Za-z]{2}" title="2-letter country code" style="flex-grow: 1;"> <button type="button" class="info-button showCountryCodesBtn" title="View Country Codes">?</button> </div>
+                    </div>
+                </div>
+                <div class="form-group"> <label for="vonageModify_msisdns">DIDs (One per line):</label> <textarea id="vonageModify_msisdns" placeholder="19545550100&#10;447700900000&#10;9055550101" rows="5"></textarea> </div>
+            </div>
+            <hr>
+            <h4>Configuration Parameters (Enable to Update)</h4>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 15px;"> These settings act as the <b>default</b> for all DIDs being modified. If using a CSV, any value in an optional column for a specific row will <b>override</b> the default set here. </p>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="app_id" data-input-target="vonageModify_app_id"><span class="slider"></span></label><label for="vonageModify_app_id" style="margin-left:10px; flex:1;">Application ID:</label><input type="text" id="vonageModify_app_id" placeholder="aaaaaaaa-bbbb-cccc-dddd-0123456789abc" style="flex:2;" disabled></div>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="moHttpUrl" data-input-target="vonageModify_moHttpUrl"><span class="slider"></span></label><label for="vonageModify_moHttpUrl" style="margin-left:10px; flex:1;">SMS Inbound Webhook (moHttpUrl):</label><input type="text" id="vonageModify_moHttpUrl" placeholder="https://example.com/webhooks/inbound-sms" style="flex:2;" disabled></div>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="moSmppSysType" data-input-target="vonageModify_moSmppSysType"><span class="slider"></span></label><label for="vonageModify_moSmppSysType" style="margin-left:10px; flex:1;">SMPP System Type (moSmppSysType):</label><input type="text" id="vonageModify_moSmppSysType" placeholder="inbound" style="flex:2;" disabled></div>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="voiceCallbackType" data-input-target="vonageModify_voiceCallbackType" id="vonageModify_voiceCallbackType_toggle"><span class="slider"></span></label><label for="vonageModify_voiceCallbackType" style="margin-left:10px; flex:1;">Voice Callback Type:</label><select id="vonageModify_voiceCallbackType" style="flex:2;" disabled><option value="">-- Select or Leave Blank to Unset --</option><option value="tel">tel</option><option value="sip">sip</option><option value="app">app (deprecated)</option></select></div>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="voiceCallbackValue" data-input-target="vonageModify_voiceCallbackValue" id="vonageModify_voiceCallbackValue_toggle"><span class="slider"></span></label><label for="vonageModify_voiceCallbackValue" style="margin-left:10px; flex:1;">Voice Callback Value:</label><input type="text" id="vonageModify_voiceCallbackValue" list="vonageModify_storedUrisDatalist" placeholder="Phone number, SIP URI, or App ID" style="flex:2;" disabled><datalist id="vonageModify_storedUrisDatalist"></datalist></div>
+            <div class="form-group toggle-container" id="vonage_modify_sip_failover_container" style="display: none;"><label class="toggle"><input type="checkbox" id="vonage_modify_sip_failover"><span class="slider"></span></label><label for="vonage_modify_sip_failover" style="margin-left:10px; flex:1;">Enable SIP Failover</label><small style="flex:2; font-size: 0.85em; color: #777;">If enabled, the Voice Callback Value will be repeated 4 times for SIP failover routing.</small></div>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="voiceStatusCallback" data-input-target="vonageModify_voiceStatusCallback"><span class="slider"></span></label><label for="vonageModify_voiceStatusCallback" style="margin-left:10px; flex:1;">Voice Status Callback URL:</label><input type="text" id="vonageModify_voiceStatusCallback" placeholder="https://example.com/webhooks/status" style="flex:2;" disabled></div>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="messagesCallbackType" data-input-target="vonageModify_messagesCallbackType"><span class="slider"></span></label><label for="vonageModify_messagesCallbackType" style="margin-left:10px; flex:1;">Messages Callback Type:</label><select id="vonageModify_messagesCallbackType" style="flex:2;" disabled><option value="">-- Select or Leave Blank to Unset --</option><option value="app">app</option></select></div>
+            <div class="form-group toggle-container"><label class="toggle"><input type="checkbox" data-config-param="messagesCallbackValue" data-input-target="vonageModify_messagesCallbackValue"><span class="slider"></span></label><label for="vonageModify_messagesCallbackValue" style="margin-left:10px; flex:1;">Messages Callback Value (App ID):</label><input type="text" id="vonageModify_messagesCallbackValue" placeholder="Associated App ID" style="flex:2;" disabled></div>
+            <button type="submit" class="configure-button">Update DID(s) Configuration</button>
+            <button type="button" id="stop_modify_button" class="stop-button" style="display: none;">Stop Update</button>
+        </form>
+        <div id="vonageModifyDidStatusArea" style="margin-top: 20px; display: none;">
+            <h4>Update Status per DID:</h4>
+            <ul id="vonageModifyDidStatusList" style="list-style-type: none; padding-left: 0;"></ul>
+        </div>
+    </div>
+</details>
+<!-- END OF FILE templates/partials/_vonage_modify_dids.html -->

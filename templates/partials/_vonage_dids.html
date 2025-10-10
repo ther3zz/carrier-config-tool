@@ -1,0 +1,103 @@
+<!-- START OF FILE templates/partials/_vonage_dids.html -->
+<details id="vonageDidAccordion">
+    <summary>Search, Buy & Configure DIDs</summary>
+    <div class="action-content has-inner-tabs">
+        <div class="inner-tabs">
+            <div class="inner-tab-link active" onclick="openInnerTab(event, 'individual-search-purchase', this)">Individual Search & Purchase</div>
+            <div class="inner-tab-link" onclick="openInnerTab(event, 'bulk-npa-purchase', this)">Bulk NPA Purchase</div>
+        </div>
+        <div id="individual-search-purchase" class="inner-tab-content active">
+            <div style="padding: 0 20px 20px 20px;">
+                <h3>1. Search Available DIDs</h3>
+                <form id="vonageSearchForm">
+                    <p>Select an account to use for Search, Purchase, and Configure actions.</p>
+                    <div class="credential-selector-container" data-id-prefix="vonage_search"></div>
+                    <div class="form-group"> <label for="vonage_search_country">Country Code (ISO 3166-1 alpha-2):</label> <input type="text" id="vonage_search_country" value="US" maxlength="2" pattern="[A-Za-z]{2}" title="Enter 2-letter country code" required> </div>
+                    <div class="form-group"> <label for="vonage_search_type">Number Type:</label> <select id="vonage_search_type"> <option value="">Any (Default)</option> <option value="landline">Landline</option> <option value="mobile-lvn">Mobile</option> <option value="landline-toll-free">Toll-Free</option> </select> </div>
+                    <div class="form-group"> <label for="vonage_search_pattern">Number Pattern (Optional):</label> <input type="text" id="vonage_search_pattern" placeholder="e.g., 1954 or part of a number"> </div>
+                    <div class="form-group"> <label for="vonage_search_search_pattern">Search Strategy (if Pattern is used):</label> <select id="vonage_search_search_pattern"> <option value="0">Starts with pattern</option> <option value="1">Contains pattern</option> <option value="2">Ends with pattern</option> </select> </div>
+                    <div class="form-group"> <label for="vonage_search_features">Required Features:</label> <select id="vonage_search_features" required> <option value="VOICE" selected>VOICE</option> <option value="SMS">SMS</option> <option value="MMS">MMS</option> <option value="SMS,VOICE">SMS, VOICE</option> <option value="SMS,MMS">SMS, MMS</option> <option value="VOICE,MMS">VOICE, MMS</option> <option value="SMS,MMS,VOICE">SMS, MMS, VOICE</option> </select> </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;"> <button type="submit">Search DIDs</button> </div>
+                </form>
+                <hr style="margin: 30px 0;">
+                <div id="search-results-area" style="display: none;">
+                    <h3>2. Select & Purchase DIDs</h3>
+                    <p><strong id="search-count">0</strong> number(s) found. Select numbers below:</p>
+                    <div id="search-results-container"><ul></ul></div>
+                    <div id="purchase-controls" style="margin-top: 20px;">
+                        <div class="form-group"> <label for="vonage_purchase_target_key">Target API Key (Optional - for Subaccounts):</label> <input type="text" id="vonage_purchase_target_key" placeholder="Enter API key of subaccount if needed"> </div>
+                        <button type="button" id="vonage_purchase_button" class="purchase-button" disabled>Purchase Selected (<span id="selected-count">0</span>)</button>
+                        <button type="button" id="stop_individual_purchase_button" class="stop-button" style="display: none;">Stop Purchase</button>
+                        <p style="font-size: 0.9em; color: #666; margin-top: 10px;"><i>Uses the account selected in the search section.</i></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="bulk-npa-purchase" class="inner-tab-content">
+             <div style="padding: 0 20px 20px 20px;">
+                 <h3>Bulk NPA Purchase (US/CA VOICE DIDs)</h3>
+                 <form id="vonageBulkNpaForm">
+                     <p>This tool will attempt to find and purchase <strong>one available US or Canadian VOICE DID</strong> for each NPA (area code) listed below.</p>
+                     <p><i>Uses the <strong>Account</strong>, and optional <strong>Target API Key</strong> from the 'Individual Search & Purchase' tab.</i></p>
+                     <p style="font-size: 0.9em; color: #666;"><i>Request rate/concurrency can be adjusted via the ⚙ settings icon in the page header.</i></p>
+                     <div class="form-group"> <label for="vonage_bulk_npa_list">NPAs (US/CA Area Codes, one per line):</label> <textarea id="vonage_bulk_npa_list" required placeholder="954&#10;305&#10;905&#10;786"></textarea> </div>
+                     <div style="display: flex; gap: 10px; flex-wrap: wrap;"> <button type="button" id="vonage_bulk_npa_purchase_button" class="purchase-button">Purchase DIDs by NPA</button> <button type="button" id="stop_bulk_purchase_button" class="stop-button" style="display: none;">Stop Purchase</button> </div>
+                 </form>
+             </div>
+        </div>
+        <div style="padding: 0 20px 20px 20px;">
+            <hr style="margin: 30px 0;">
+            <div id="purchase-status-area" style="display: none; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+                <h3>Purchase Status</h3>
+                <div id="purchase-status-container-div"><ul></ul></div>
+            </div>
+            <hr style="margin: 30px 0;">
+            <div id="configuration-area" style="display: none;">
+                <h3>3. Configure Purchased DIDs</h3>
+                <p>Configure the <strong id="purchased-count">0</strong> successfully purchased number(s) below.</p>
+                <form id="vonageConfigureForm">
+                    <div class="form-group"> <label for="vonage_config_voiceCallbackType">Voice Callback Type:</label> <select id="vonage_config_voiceCallbackType" required> <option value="sip">SIP</option> <option value="tel">Telephone</option> </select> </div>
+                    <div class="form-group"> <label for="vonage_config_voiceCallbackValue">Voice Callback Value (SIP URI / FQDN or Tel Number):</label> <input type="text" id="vonage_config_voiceCallbackValue" required list="stored-uris-list" placeholder="e.g., sip:user@domain.com, sbc.domain.com or 12125551212"> <datalist id="stored-uris-list"> </datalist> </div>
+                    <div class="form-group" id="vonage_config_sip_failover_container" style="display: none;">
+                        <div class="toggle-container" style="justify-content: flex-start; align-items: center;">
+                            <label class="toggle"> <input type="checkbox" id="vonage_config_sip_failover"> <span class="slider"></span> </label>
+                            <span style="margin-left: 10px; font-weight: bold;">Enable SIP Failover</span>
+                        </div>
+                        <small style="display: block; margin-top: 5px; color: #777;">If enabled, the SIP URI will be repeated 4 times for failover routing.</small>
+                    </div>
+                    <div class="form-group"> <label for="vonage_config_app_id">Application ID (Optional):</label> <input type="text" id="vonage_config_app_id" placeholder="Optional Vonage Application ID"> </div>
+                    <div class="form-group">
+                        <details id="vonage_config_storedUrisDetails">
+                            <summary style="cursor: pointer; font-weight: bold; margin-bottom: 10px;">Manage Stored Callback URIs/FQDNs (Session Only)</summary>
+                            <div style="padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px;">
+                                <div id="vonage_config_storedUrisList" style="margin-bottom: 15px;">
+                                    <div style="font-weight: bold; margin-bottom: 5px;">Stored URIs/FQDNs:</div>
+                                    <div id="vonage_config_noStoredItems" style="font-style: italic; color: #777;">Loading...</div>
+                                    <div id="vonage_config_storedItemsContainer"></div>
+                                </div>
+                                <p style="font-size: 0.9em; color: #666;"><i>Adding/deleting only affects suggestions and this list for the current session.</i></p>
+                                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                                    <div style="flex: 2;"><input type="text" id="vonage_config_newItemValue" placeholder="SIP URI, FQDN or Tel Number"></div>
+                                    <div style="flex: 2;"><input type="text" id="vonage_config_newItemLabel" placeholder="Label (e.g., Main Endpoint)"></div>
+                                    <div><button type="button" id="vonage_config_addStoredItem" class="add-stored-item-btn" data-type="uri" style="padding: 8px 10px;">Add URI/FQDN</button></div>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        <button type="button" id="vonage_configure_button" class="configure-button" disabled>Configure Purchased Numbers</button>
+                        <button type="button" id="stop_configure_button" class="stop-button" style="display: none;">Stop Configuration</button>
+                        <button type="button" id="vonage_export_button" class="export-button" disabled>Export Configuration</button>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 10px;"><i>Uses the account selected in the 'Individual Search & Purchase' tab.</i></p>
+                     <p style="font-size: 0.9em; color: #666;"><i>Request rate/concurrency can be adjusted via the ⚙ settings icon in the page header.</i></p>
+                </form>
+                <div id="configuration-status-area" style="display: none; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+                    <h3>Configuration Status</h3>
+                    <div id="configuration-status-container-div"><ul></ul></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</details>
+<!-- END OF FILE templates/partials/_vonage_dids.html -->
