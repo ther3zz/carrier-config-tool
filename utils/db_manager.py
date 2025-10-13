@@ -189,7 +189,11 @@ def db_delete_credential(name: str) -> bool:
             conn.close()
 
 def db_find_credential_by_groupid_in_name(groupid: str):
-    """Finds a credential by its groupid, including the new default settings."""
+    """
+    Finds a credential by its groupid within the credential name.
+    - If the groupid is less than 3 characters, it performs a whole-word search to avoid partial matches (e.g., '1' matching '10').
+    - Otherwise, it performs a broad substring search for backward compatibility.
+    """
     conn = None
     if not groupid:
         return None
@@ -197,8 +201,20 @@ def db_find_credential_by_groupid_in_name(groupid: str):
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        query = "SELECT name, api_key, encrypted_secret, default_voice_callback_type, default_voice_callback_value FROM credentials WHERE name LIKE ?"
-        search_pattern = f"%{groupid}%"
+
+        # --- START: MODIFICATION ---
+        if len(groupid) < 3:
+            # Use REGEXP for a "whole word" search to find the exact number.
+            # This prevents '1' from matching '10', '11', etc. in names like "GroupId [10]".
+            # '[[:<:]]' and '[[:>:]]' are word boundaries in MariaDB/MySQL REGEXP.
+            query = "SELECT name, api_key, encrypted_secret, default_voice_callback_type, default_voice_callback_value FROM credentials WHERE name REGEXP ?"
+            search_pattern = f"[[:<:]]{groupid}[[:>:]]"
+        else:
+            # For longer, more unique groupids, the original substring search is acceptable.
+            query = "SELECT name, api_key, encrypted_secret, default_voice_callback_type, default_voice_callback_value FROM credentials WHERE name LIKE ?"
+            search_pattern = f"%{groupid}%"
+        # --- END: MODIFICATION ---
+
         cursor.execute(query, (search_pattern,))
         result = cursor.fetchone()
         return result
