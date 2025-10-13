@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.security import APIKeyHeader
-from pantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List
 
 # --- Import Core Application Logic ---
@@ -410,53 +410,60 @@ async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while saving the new defaults: {e}")
     return UpdateSuccessResponse(message=f"Successfully updated stored defaults for groupid '{request.groupid}'.")
 
+# --- START: MODIFICATION ---
 @app.post("/update-dids-batch", response_model=DIDBatchUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest):
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
+    
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
     delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
     treat_420_as_success = settings_manager.get_setting('treat_420_as_success_configure', False)
+    
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
-    
-    # --- START: MODIFICATION ---
-    valid_did_items = []
-    results = []
-    # Pre-filter DIDs to validate format for auto-detection before processing
-    for item in request.dids:
-        if not item.country:
-            numeric_did = "".join(filter(str.isdigit, item.did))
-            if len(numeric_did) != 10:
-                results.append(BatchResult(did=item.did, status='failed', detail="Invalid DID format. Must be 10 digits if country is omitted."))
-                continue
-        valid_did_items.append(item)
-    # --- END: MODIFICATION ---
 
-    for i in range(0, len(valid_did_items), max_concurrency):
-        batch = valid_did_items[i:i + max_concurrency]
-        tasks = []
-        for item in batch:
-            tasks.append(
-                _process_single_did_update(
-                    did_item=item,
-                    subaccount_creds=subaccount_creds,
-                    request=request,
-                    log_enabled=log_enabled,
-                    treat_420_as_success=treat_420_as_success
-                )
+    # Pre-process and filter the list for valid DIDs
+    dids_to_process = []
+    processed_results = []
+    for item in request.dids:
+        sanitized_did = "".join(filter(str.isdigit, item.did))
+        # If country is not provided, we rely on auto-detection which requires a 10-digit number.
+        if item.country is None and len(sanitized_did) != 10:
+            result = BatchResult(
+                did=item.did,
+                status='failed',
+                detail="Invalid format. A 10-digit number is required for auto-detection when 'country' is omitted."
             )
+            processed_results.append(result)
+        else:
+            dids_to_process.append(item)
+
+    # Process the valid DIDs in batches
+    for i in range(0, len(dids_to_process), max_concurrency):
+        batch = dids_to_process[i:i + max_concurrency]
+        tasks = [
+            _process_single_did_update(
+                did_item=item,
+                subaccount_creds=subaccount_creds,
+                request=request,
+                log_enabled=log_enabled,
+                treat_420_as_success=treat_420_as_success
+            ) for item in batch
+        ]
         batch_results = await asyncio.gather(*tasks)
-        results.extend(batch_results)
-        if i + max_concurrency < len(valid_did_items):
+        processed_results.extend(batch_results)
+        
+        if i + max_concurrency < len(dids_to_process):
             await asyncio.sleep(delay_ms / 1000.0)
 
-    success_count = sum(1 for r in results if r.status == 'success')
-    failed_count = len(results) - success_count
+    success_count = sum(1 for r in processed_results if r.status == 'success')
+    failed_count = len(processed_results) - success_count
     final_message = "Batch update process completed."
+
     if request.update_group_defaults:
         try:
             credentials_manager.save_credential(
@@ -470,13 +477,15 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest):
             final_message += " Stored defaults for the group were also updated."
         except Exception as e:
             final_message += f" However, failed to update the stored defaults for the group: {e}"
+            
     return DIDBatchUpdateResponse(
         message=final_message,
-        total_processed=len(results),
+        total_processed=len(request.dids),
         success_count=success_count,
         failed_count=failed_count,
-        results=results
+        results=processed_results
     )
+# --- END: MODIFICATION ---
 
 async def _process_single_did_update(did_item, subaccount_creds, request, log_enabled, treat_420_as_success):
     try:
@@ -527,21 +536,11 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest):
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
         
-    # --- START: MODIFICATION ---
-    valid_did_items = []
     results = []
-    # Pre-filter DIDs to validate format for auto-detection before processing
-    for item in request.dids:
-        if not item.country:
-            numeric_did = "".join(filter(str.isdigit, item.did))
-            if len(numeric_did) != 10:
-                results.append(BatchResult(did=item.did, status='failed', detail="Invalid DID format. Must be 10 digits if country is omitted."))
-                continue
-        valid_did_items.append(item)
-    # --- END: MODIFICATION ---
+    did_items = request.dids
     
-    for i in range(0, len(valid_did_items), max_concurrency):
-        batch = valid_did_items[i:i + max_concurrency]
+    for i in range(0, len(did_items), max_concurrency):
+        batch = did_items[i:i + max_concurrency]
         tasks = [
             _process_single_did_release(
                 did_item=item,
@@ -554,7 +553,7 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest):
         batch_results = await asyncio.gather(*tasks)
         results.extend(batch_results)
         
-        if i + max_concurrency < len(valid_did_items):
+        if i + max_concurrency < len(did_items):
             await asyncio.sleep(delay_ms / 1000.0)
             
     success_count = sum(1 for r in results if r.status == 'success')
