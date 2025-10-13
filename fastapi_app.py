@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional, List
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
+from typing import Optional, List, Dict, Any
 
 # --- Import Core Application Logic ---
 from utils.config_loader import load_config_file
@@ -134,24 +134,28 @@ class DIDUpdateItem(BaseModel):
     did: str = Field(..., description="The phone number (DID) to be updated.", pattern=r'^\d{10,15}$')
     country: Optional[str] = Field(None, description="Optional. The 2-letter ISO country code of the DID.", min_length=2, max_length=2)
 
+# --- START: MODIFICATION ---
 class DIDBatchUpdateRequest(BaseModel):
     groupid: str = Field(..., description="The group ID for the account that owns all DIDs in the list.")
-    dids: List[DIDUpdateItem] = Field(..., description="A list of DIDs to update.", min_length=1)
+    dids: List[Dict[str, Any]] = Field(..., description="A list of DIDs to update.", min_length=1)
     voice_callback_type: str = Field(..., description="The voice callback type to apply to all DIDs in the list.")
     voice_callback_value: str = Field(..., description="The voice callback value to apply to all DIDs in the list.")
     update_group_defaults: bool = Field(False, description="If true, also save these settings as the new defaults for the group.")
+# --- END: MODIFICATION ---
 
 class BatchResult(BaseModel):
     did: str
     status: str
     detail: str
 
+# --- START: MODIFICATION ---
 class DIDBatchUpdateResponse(BaseModel):
     message: str
-    total_processed: int
+    total_requested: int
     success_count: int
     failed_count: int
-    results: List[BatchResult]
+    results: Optional[List[BatchResult]] = Field(None, description="Detailed results of each operation. Only present if 'debug=true' is in the query string.")
+# --- END: MODIFICATION ---
     
 class DIDBatchProvisionRequest(BaseModel):
     groupid: str = Field(..., description="The group ID for the account that will own the provisioned DIDs.")
@@ -178,16 +182,18 @@ class DIDReleaseItem(BaseModel):
     did: str = Field(..., description="The phone number (DID) to be released.", pattern=r'^\d{10,15}$')
     country: Optional[str] = Field(None, description="Optional. The 2-letter ISO country code of the DID.", min_length=2, max_length=2)
 
+# --- START: MODIFICATION ---
 class DIDBatchReleaseRequest(BaseModel):
     groupid: str = Field(..., description="The group ID for the account that owns all DIDs in the list.")
-    dids: List[DIDReleaseItem] = Field(..., description="A list of DIDs to release.", min_length=1)
+    dids: List[Dict[str, Any]] = Field(..., description="A list of DIDs to release.", min_length=1)
 
 class DIDBatchReleaseResponse(BaseModel):
     message: str
-    total_processed: int
+    total_requested: int
     success_count: int
     failed_count: int
-    results: List[BatchResult]
+    results: Optional[List[BatchResult]] = Field(None, description="Detailed results of each operation. Only present if 'debug=true' is in the query string.")
+# --- END: MODIFICATION ---
 
 # --- API Endpoints ---
 @app.on_event("startup")
@@ -412,7 +418,7 @@ async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest):
 
 # --- START: MODIFICATION ---
 @app.post("/update-dids-batch", response_model=DIDBatchUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
-async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest):
+async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, debug: bool = False):
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     
@@ -426,45 +432,58 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest):
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
 
-    # Pre-process and filter the list for valid DIDs
+    all_results = []
     dids_to_process = []
-    processed_results = []
-    for item in request.dids:
-        sanitized_did = "".join(filter(str.isdigit, item.did))
-        # If country is not provided, we rely on auto-detection which requires a 10-digit number.
-        if item.country is None and len(sanitized_did) != 10:
+    
+    for item_dict in request.dids:
+        try:
+            valid_item = DIDUpdateItem.model_validate(item_dict)
+            
+            sanitized_did = "".join(filter(str.isdigit, valid_item.did))
+            if valid_item.country is None and len(sanitized_did) != 10:
+                result = BatchResult(
+                    did=valid_item.did,
+                    status='failed',
+                    detail="Invalid format. A 10-digit number is required for auto-detection when 'country' is omitted."
+                )
+                all_results.append(result)
+            else:
+                dids_to_process.append(valid_item)
+
+        except ValidationError as e:
+            error_detail = e.errors()[0]
+            field = ".".join(map(str, error_detail['loc']))
+            msg = error_detail['msg']
             result = BatchResult(
-                did=item.did,
+                did=item_dict.get('did', 'N/A'),
                 status='failed',
-                detail="Invalid format. A 10-digit number is required for auto-detection when 'country' is omitted."
+                detail=f"Invalid item format for field '{field}': {msg}"
             )
-            processed_results.append(result)
-        else:
-            dids_to_process.append(item)
+            all_results.append(result)
 
-    # Process the valid DIDs in batches
-    for i in range(0, len(dids_to_process), max_concurrency):
-        batch = dids_to_process[i:i + max_concurrency]
-        tasks = [
-            _process_single_did_update(
-                did_item=item,
-                subaccount_creds=subaccount_creds,
-                request=request,
-                log_enabled=log_enabled,
-                treat_420_as_success=treat_420_as_success
-            ) for item in batch
-        ]
-        batch_results = await asyncio.gather(*tasks)
-        processed_results.extend(batch_results)
-        
-        if i + max_concurrency < len(dids_to_process):
-            await asyncio.sleep(delay_ms / 1000.0)
+    if dids_to_process:
+        for i in range(0, len(dids_to_process), max_concurrency):
+            batch = dids_to_process[i:i + max_concurrency]
+            tasks = [
+                _process_single_did_update(
+                    did_item=item,
+                    subaccount_creds=subaccount_creds,
+                    request=request,
+                    log_enabled=log_enabled,
+                    treat_420_as_success=treat_420_as_success
+                ) for item in batch
+            ]
+            api_batch_results = await asyncio.gather(*tasks)
+            all_results.extend(api_batch_results)
+            
+            if i + max_concurrency < len(dids_to_process):
+                await asyncio.sleep(delay_ms / 1000.0)
 
-    success_count = sum(1 for r in processed_results if r.status == 'success')
-    failed_count = len(processed_results) - success_count
+    success_count = sum(1 for r in all_results if r.status == 'success')
+    failed_count = len(all_results) - success_count
     final_message = "Batch update process completed."
 
-    if request.update_group_defaults:
+    if request.update_group_defaults and success_count > 0:
         try:
             credentials_manager.save_credential(
                 name=subaccount_creds['account_name'],
@@ -477,14 +496,18 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest):
             final_message += " Stored defaults for the group were also updated."
         except Exception as e:
             final_message += f" However, failed to update the stored defaults for the group: {e}"
-            
-    return DIDBatchUpdateResponse(
+    
+    response_payload = DIDBatchUpdateResponse(
         message=final_message,
-        total_processed=len(request.dids),
+        total_requested=len(request.dids),
         success_count=success_count,
-        failed_count=failed_count,
-        results=processed_results
+        failed_count=failed_count
     )
+
+    if debug:
+        response_payload.results = all_results
+        
+    return response_payload
 # --- END: MODIFICATION ---
 
 async def _process_single_did_update(did_item, subaccount_creds, request, log_enabled, treat_420_as_success):
@@ -522,8 +545,9 @@ async def _process_single_did_update(did_item, subaccount_creds, request, log_en
     except Exception as e:
         return BatchResult(did=did_item.did, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
 
+# --- START: MODIFICATION ---
 @app.post("/release-dids-batch", response_model=DIDBatchReleaseResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
-async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest):
+async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, debug: bool = False):
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     
@@ -536,36 +560,68 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest):
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
         
-    results = []
-    did_items = request.dids
+    all_results = []
+    dids_to_process = []
     
-    for i in range(0, len(did_items), max_concurrency):
-        batch = did_items[i:i + max_concurrency]
-        tasks = [
-            _process_single_did_release(
-                did_item=item,
-                groupid=request.groupid,
-                subaccount_creds=subaccount_creds,
-                log_enabled=log_enabled
-            ) for item in batch
-        ]
-        
-        batch_results = await asyncio.gather(*tasks)
-        results.extend(batch_results)
-        
-        if i + max_concurrency < len(did_items):
-            await asyncio.sleep(delay_ms / 1000.0)
+    for item_dict in request.dids:
+        try:
+            valid_item = DIDReleaseItem.model_validate(item_dict)
             
-    success_count = sum(1 for r in results if r.status == 'success')
-    failed_count = len(results) - success_count
+            sanitized_did = "".join(filter(str.isdigit, valid_item.did))
+            if valid_item.country is None and len(sanitized_did) != 10:
+                result = BatchResult(
+                    did=valid_item.did,
+                    status='failed',
+                    detail="Invalid format. A 10-digit number is required for auto-detection when 'country' is omitted."
+                )
+                all_results.append(result)
+            else:
+                dids_to_process.append(valid_item)
+
+        except ValidationError as e:
+            error_detail = e.errors()[0]
+            field = ".".join(map(str, error_detail['loc']))
+            msg = error_detail['msg']
+            result = BatchResult(
+                did=item_dict.get('did', 'N/A'),
+                status='failed',
+                detail=f"Invalid item format for field '{field}': {msg}"
+            )
+            all_results.append(result)
     
-    return DIDBatchReleaseResponse(
+    if dids_to_process:
+        for i in range(0, len(dids_to_process), max_concurrency):
+            batch = dids_to_process[i:i + max_concurrency]
+            tasks = [
+                _process_single_did_release(
+                    did_item=item,
+                    groupid=request.groupid,
+                    subaccount_creds=subaccount_creds,
+                    log_enabled=log_enabled
+                ) for item in batch
+            ]
+            
+            api_batch_results = await asyncio.gather(*tasks)
+            all_results.extend(api_batch_results)
+            
+            if i + max_concurrency < len(dids_to_process):
+                await asyncio.sleep(delay_ms / 1000.0)
+            
+    success_count = sum(1 for r in all_results if r.status == 'success')
+    failed_count = len(all_results) - success_count
+    
+    response_payload = DIDBatchReleaseResponse(
         message="Batch release process completed.",
-        total_processed=len(results),
+        total_requested=len(request.dids),
         success_count=success_count,
-        failed_count=failed_count,
-        results=results
+        failed_count=failed_count
     )
+    
+    if debug:
+        response_payload.results = all_results
+        
+    return response_payload
+# --- END: MODIFICATION ---
 
 async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, subaccount_creds: dict, log_enabled: bool) -> BatchResult:
     try:
