@@ -80,6 +80,7 @@ class ProvisioningResponse(BaseModel):
     subaccount_api_key: str
     configuration_status: str
 
+# --- START: MODIFICATION ---
 class DIDReleaseRequest(BaseModel):
     groupid: str = Field(..., description="The unique group ID to match against the subaccount that owns the DID.")
     did: str = Field(..., description="The phone number (DID) to be released.", pattern=r'^\d{10,15}$')
@@ -94,6 +95,7 @@ class ReleaseResponse(BaseModel):
     message: str
     released_did: str
     subaccount_name: str
+# --- END: MODIFICATION ---
 
 class DIDUpdateRequest(BaseModel):
     groupid: str = Field(..., description="The unique group ID to match against the subaccount that owns the DID.")
@@ -343,6 +345,7 @@ async def update_did_endpoint(request: DIDUpdateRequest, request_obj: Request):
         applied_configuration=update_config
     )
 
+# --- START: MODIFICATION ---
 @app.post("/release-did", response_model=ReleaseResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def release_did_endpoint(request: DIDReleaseRequest, request_obj: Request):
     if credentials_manager.STORAGE_MODE != 'db': raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
@@ -374,6 +377,7 @@ async def release_did_endpoint(request: DIDReleaseRequest, request_obj: Request)
     notification_service.fire_and_forget("did.released", notif_payload)
 
     return ReleaseResponse(message=f"Successfully released DID {request.did} from account for groupid '{request.groupid}'.", released_did=request.did, subaccount_name=subaccount_creds['account_name'])
+# --- END: MODIFICATION ---
 
 @app.post("/update-group-defaults", response_model=UpdateSuccessResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Configuration"])
 async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest):
