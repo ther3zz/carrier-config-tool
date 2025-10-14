@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 
 from . import settings_manager
 
-# Use a single, shared async client for performance.
-async_client = httpx.AsyncClient()
+# --- START: MODIFICATION ---
+# REMOVED: The global async_client is removed to prevent it from being tied to a closed event loop.
+# async_client = httpx.AsyncClient()
+# --- END: MODIFICATION ---
 
 async def send_notification(event_type: str, data: dict):
     """
@@ -54,7 +56,6 @@ async def send_notification(event_type: str, data: dict):
     request_kwargs = {'timeout': 10.0}
     payload_for_signing = None
 
-    # --- START: MODIFICATION (Flatten payload for form-urlencoded) ---
     if content_type == 'application/x-www-form-urlencoded':
         # Create a new, flat dictionary by merging the top-level fields
         # with the fields from the nested 'data' dictionary.
@@ -74,7 +75,6 @@ async def send_notification(event_type: str, data: dict):
         request_kwargs['content'] = json_payload_bytes
         if secret:
             payload_for_signing = json_payload_bytes
-    # --- END: MODIFICATION ---
 
     if secret and payload_for_signing:
         signature_hash = hmac.new(secret.encode('utf-8'), payload_for_signing, hashlib.sha256)
@@ -83,10 +83,15 @@ async def send_notification(event_type: str, data: dict):
     
     request_kwargs['headers'] = headers
 
+    # --- START: MODIFICATION ---
+    # Create the client within an 'async with' block. This ensures the client
+    # is created and closed within the same event loop managed by 'asyncio.run()'.
     try:
-        response = await async_client.post(webhook_url, **request_kwargs)
-        response.raise_for_status() 
-        print(f"Notification Sent: Event '{event_type}' to {webhook_url} as {content_type}. Status: {response.status_code}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(webhook_url, **request_kwargs)
+            response.raise_for_status() 
+            print(f"Notification Sent: Event '{event_type}' to {webhook_url} as {content_type}. Status: {response.status_code}")
+    # --- END: MODIFICATION ---
     except httpx.RequestError as e:
         print(f"Notification Error: Failed to send event '{event_type}' to {webhook_url}. Details: {e}")
     except Exception as e:
