@@ -2,9 +2,21 @@
 
 version: '3.8'
 
+x-dns: &default-dns
+  dns:
+    - 1.1.1.1        # Cloudflare
+    - 8.8.8.8        # Google
+  dns_opt:
+    - ndots:2
+    - edns0
+  # If you use internal search domains, uncomment and edit:
+  # dns_search:
+  #   - corp.example.com
+
 services:
   # --- Flask Web Application (UI) ---
   flask_app:
+    <<: *default-dns
     build:
       context: .
       dockerfile: Dockerfile
@@ -23,6 +35,7 @@ services:
 
   # --- FastAPI Provisioning Service ---
   fastapi_app:
+    <<: *default-dns
     build:
       context: .
       dockerfile: Dockerfile
