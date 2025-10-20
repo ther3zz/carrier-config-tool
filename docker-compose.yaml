@@ -1,25 +1,22 @@
-# --- START OF FILE docker-compose.yaml ---
-
 version: '3.8'
 
 x-dns: &default-dns
   dns:
-    - 1.1.1.1        # Cloudflare
-    - 8.8.8.8        # Google
+    - 1.1.1.1
+    - 8.8.8.8
   dns_opt:
-    - ndots:2
+    - ndots:1
     - edns0
-  # If you use internal search domains, uncomment and edit:
   # dns_search:
-  #   - corp.example.com
+  #   - your.internal.domain
 
 services:
-  # --- Flask Web Application (UI) ---
   flask_app:
     <<: *default-dns
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: flask_ui_app
     ports:
       - "5000:5000"
@@ -30,15 +27,14 @@ services:
       - .env
     command: "flask run --host=0.0.0.0 --port=5000 --no-reload"
     restart: unless-stopped
-    profiles:
-      - ui
+    profiles: [ui]
 
-  # --- FastAPI Provisioning Service ---
   fastapi_app:
     <<: *default-dns
     build:
       context: .
       dockerfile: Dockerfile
+      network: host          # <-- fixes build-time networking
     container_name: fastapi_provisioning_api
     ports:
       - "8000:8000"
@@ -49,7 +45,4 @@ services:
       - .env
     command: "uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --reload --reload-exclude /app/logs"
     restart: unless-stopped
-    profiles:
-      - api
-
-# --- END OF FILE docker-compose.yaml ---
+    profiles: [api]
