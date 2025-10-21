@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.security import APIKeyHeader
-from pantic import BaseModel, Field, field_validator, model_validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
 from typing import Optional, List, Dict, Any
 
 # --- Import Core Application Logic ---
@@ -189,7 +189,6 @@ class DIDBatchReleaseResponse(BaseModel):
     failed_count: int
     results: Optional[List[BatchResult]] = Field(None, description="Detailed results of each operation. Only present if 'debug=true' is in the query string.")
 
-
 # --- API Endpoints ---
 @app.on_event("startup")
 async def startup_event():
@@ -240,6 +239,8 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
                 "created_by": "FastAPI Provisioning Endpoint"
             }
             notification_service.fire_and_forget("subaccount.created", notif_payload)
+            # After saving, immediately re-fetch the credentials using the canonical function
+            # This ensures we use the correctly stored and decrypted secret for the next steps.
             subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save or re-fetch new subaccount credentials: {e}")
@@ -412,8 +413,6 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, debug: bool
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     
-    # Refresh settings from DB at the start of each request
-    settings_manager.get_all_settings()
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
     delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
@@ -454,8 +453,6 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, debug: bool
             all_results.append(result)
 
     if dids_to_process:
-        # --- START: MODIFICATION ---
-        # Process in chunks, with a delay between each chunk.
         for i in range(0, len(dids_to_process), max_concurrency):
             batch = dids_to_process[i:i + max_concurrency]
             tasks = [
@@ -470,10 +467,8 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, debug: bool
             api_batch_results = await asyncio.gather(*tasks)
             all_results.extend(api_batch_results)
             
-            # Add a delay between batches to respect rate limits
             if i + max_concurrency < len(dids_to_process):
                 await asyncio.sleep(delay_ms / 1000.0)
-        # --- END: MODIFICATION ---
 
     success_count = sum(1 for r in all_results if r.status == 'success')
     failed_count = len(all_results) - success_count
@@ -524,7 +519,6 @@ async def _process_single_did_update(did_item, subaccount_creds, request, log_en
         if request.voice_callback_type == 'sip' and '@' not in final_callback_value and final_callback_value != '':
             final_callback_value = f"{_get_national_number(msisdn_to_use, country_to_use)}@{final_callback_value}"
         update_config['voiceCallbackValue'] = final_callback_value
-        
         update_result, update_status = await asyncio.to_thread(
             vonage_client.update_did,
             username=subaccount_creds['api_key'],
@@ -535,7 +529,6 @@ async def _process_single_did_update(did_item, subaccount_creds, request, log_en
             log_enabled=log_enabled,
             treat_420_as_success=treat_420_as_success
         )
-
         if update_status >= 400:
             return BatchResult(did=did_item.did, status='failed', detail=f"Vonage API error: {update_result.get('error', 'Unknown error')}")
         return BatchResult(did=did_item.did, status='success', detail="DID updated successfully.")
@@ -547,8 +540,6 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, debug: bo
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     
-    # Refresh settings from DB at the start of each request
-    settings_manager.get_all_settings()
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
     delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
@@ -588,8 +579,6 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, debug: bo
             all_results.append(result)
     
     if dids_to_process:
-        # --- START: MODIFICATION ---
-        # Process in chunks, with a delay between each chunk.
         for i in range(0, len(dids_to_process), max_concurrency):
             batch = dids_to_process[i:i + max_concurrency]
             tasks = [
@@ -604,10 +593,8 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, debug: bo
             api_batch_results = await asyncio.gather(*tasks)
             all_results.extend(api_batch_results)
             
-            # Add a delay between batches to respect rate limits
             if i + max_concurrency < len(dids_to_process):
                 await asyncio.sleep(delay_ms / 1000.0)
-        # --- END: MODIFICATION ---
             
     success_count = sum(1 for r in all_results if r.status == 'success')
     failed_count = len(all_results) - success_count
@@ -670,20 +657,30 @@ async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, su
     except Exception as e:
         return BatchResult(did=did_item.did, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
 
+# --- START: MODIFICATION ---
 @app.post("/provision-dids-batch", response_model=DIDBatchProvisionResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
+    """
+    Provisions DIDs in a multi-stage batch process (Search, Buy, Configure)
+    to avoid API rate limiting.
+    """
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
 
-    # Refresh settings from DB at the start of each request
-    settings_manager.get_all_settings()
+    # --- Dynamically fetch settings for each request ---
+    settings_manager.get_all_settings() # Refresh cache from DB
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
     delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
-    treat_420_as_success_buy = settings_manager.get_setting('treat_420_as_success_buy', False)
-    verify_on_420_buy = settings_manager.get_setting('verify_on_420_buy', False)
-    treat_420_as_success_configure = settings_manager.get_setting('treat_420_as_success_configure', False)
+    
+    api_settings = {
+        "log_enabled": log_enabled,
+        "treat_420_as_success_buy": settings_manager.get_setting('treat_420_as_success_buy', False),
+        "verify_on_420_buy": settings_manager.get_setting('verify_on_420_buy', False),
+        "treat_420_as_success_configure": settings_manager.get_setting('treat_420_as_success_configure', False),
+    }
 
+    # --- Subaccount lookup and creation (same as before) ---
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
     except ValueError:
@@ -715,37 +712,78 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save or re-fetch new credentials: {e}")
 
-    results = []
-    # --- START: MODIFICATION ---
-    # Process in chunks, with a delay between each chunk.
-    for i in range(0, len(request.npas), max_concurrency):
-        batch = request.npas[i:i + max_concurrency]
-        tasks = [
-            _process_single_did_provision(
-                npa=npa,
-                groupid=request.groupid,
-                subaccount_creds=subaccount_creds,
-                request=request,
-                settings={
-                    "log_enabled": log_enabled,
-                    "treat_420_as_success_buy": treat_420_as_success_buy,
-                    "verify_on_420_buy": verify_on_420_buy,
-                    "treat_420_as_success_configure": treat_420_as_success_configure,
-                },
-            ) for npa in batch
-        ]
-        batch_results = await asyncio.gather(*tasks)
-        results.extend(batch_results)
-        
-        # Add a delay between batches to respect rate limits
-        if i + max_concurrency < len(request.npas):
-            await asyncio.sleep(delay_ms / 1000.0)
-    # --- END: MODIFICATION ---
+    # --- STAGE 1: Search for DIDs ---
+    all_results = {} # Use a dict to store results by NPA
+    npas_to_search = list(set(request.npas)) # Deduplicate NPAs
+    dids_to_buy = []
 
-    success_count = sum(1 for r in results if r.status == 'success' or r.status == 'partial_success')
-    failed_count = len(results) - success_count
+    for i in range(0, len(npas_to_search), max_concurrency):
+        batch = npas_to_search[i:i + max_concurrency]
+        tasks = [
+            _process_single_did_search(npa, subaccount_creds, api_settings)
+            for npa in batch
+        ]
+        search_results = await asyncio.gather(*tasks)
+        for res in search_results:
+            if res['status'] == 'found':
+                dids_to_buy.append(res['data'])
+            else:
+                all_results[res['npa']] = BatchProvisionResult(npa=res['npa'], status='failed', detail=res['detail'])
+        if i + max_concurrency < len(npas_to_search):
+            await asyncio.sleep(delay_ms / 1000.0)
+
+    # --- STAGE 2: Buy DIDs ---
+    dids_to_configure = []
+    if dids_to_buy:
+        for i in range(0, len(dids_to_buy), max_concurrency):
+            batch = dids_to_buy[i:i + max_concurrency]
+            tasks = [
+                _process_single_did_buy(did_info, subaccount_creds, api_settings)
+                for did_info in batch
+            ]
+            buy_results = await asyncio.gather(*tasks)
+            for res in buy_results:
+                npa = res['data']['npa']
+                if res['status'] == 'bought':
+                    dids_to_configure.append(res['data'])
+                else:
+                    all_results[npa] = BatchProvisionResult(npa=npa, status='failed', detail=res['detail'], provisioned_did=res['data']['msisdn'])
+            if i + max_concurrency < len(dids_to_buy):
+                await asyncio.sleep(delay_ms / 1000.0)
+    
+    # --- STAGE 3: Configure DIDs ---
+    if dids_to_configure:
+        for i in range(0, len(dids_to_configure), max_concurrency):
+            batch = dids_to_configure[i:i + max_concurrency]
+            tasks = [
+                _process_single_did_configure(did_info, subaccount_creds, request, api_settings)
+                for did_info in batch
+            ]
+            configure_results = await asyncio.gather(*tasks)
+            for res in configure_results:
+                npa = res['data']['npa']
+                msisdn = res['data']['msisdn']
+                if res['status'] == 'configured':
+                    all_results[npa] = BatchProvisionResult(npa=npa, status='success', provisioned_did=msisdn, detail=f"Successfully provisioned and configured DID {msisdn}.")
+                else:
+                    all_results[npa] = BatchProvisionResult(npa=npa, status='partial_success', provisioned_did=msisdn, detail=res['detail'])
+                
+                # Fire notification regardless of config outcome
+                notification_service.fire_and_forget("did.provisioned", {
+                    "groupid": request.groupid, "did": msisdn, "country": res['data']['country'], "npa": npa,
+                    "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'],
+                    "configuration": res['config_applied'], "configuration_status": res['detail']
+                })
+            if i + max_concurrency < len(dids_to_configure):
+                await asyncio.sleep(delay_ms / 1000.0)
+
+    # --- Finalize and respond ---
+    final_results_list = list(all_results.values())
+    success_count = sum(1 for r in final_results_list if r.status in ['success', 'partial_success'])
+    failed_count = len(npas_to_search) - success_count
     final_message = "Batch provisioning process completed."
-    if request.update_group_defaults:
+
+    if request.update_group_defaults and success_count > 0:
         try:
             credentials_manager.save_credential(
                 name=subaccount_creds['account_name'], api_key=subaccount_creds['api_key'],
@@ -757,66 +795,80 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
             final_message += f" However, failed to update the stored defaults for the group: {e}"
 
     return DIDBatchProvisionResponse(
-        message=final_message, total_processed=len(results),
-        success_count=success_count, failed_count=failed_count, results=results
+        message=final_message, total_processed=len(npas_to_search),
+        success_count=success_count, failed_count=failed_count, results=final_results_list
     )
 
-async def _process_single_did_provision(npa, groupid, subaccount_creds, request, settings):
+
+async def _process_single_did_search(npa: str, subaccount_creds: dict, settings: dict) -> dict:
+    """Stage 1: Search for a single DID in a given NPA."""
     try:
         country = 'US' if npa in NPA_DATA.get('US', []) else 'CA' if npa in NPA_DATA.get('CA', []) else None
         if not country:
-            return BatchProvisionResult(npa=npa, status='failed', detail=f"NPA not found in US or CA data.")
+            return {'npa': npa, 'status': 'failed', 'detail': f"NPA not found in US or CA data."}
 
         search_params = {'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': 1}
         search_result, search_status = await asyncio.to_thread(
             vonage_client.search_dids, subaccount_creds['api_key'], subaccount_creds['api_secret'], search_params, log_enabled=settings['log_enabled']
         )
         if search_status >= 400 or not search_result.get('numbers'):
-            return BatchProvisionResult(npa=npa, status='failed', detail=f"No available numbers found. API error: {search_result.get('error', 'Unknown')}")
+            return {'npa': npa, 'status': 'failed', 'detail': f"No available numbers found. API error: {search_result.get('error', 'Unknown')}"}
+        
+        did_info = search_result['numbers'][0]
+        return {
+            'npa': npa,
+            'status': 'found',
+            'data': {
+                'npa': npa,
+                'msisdn': did_info.get('msisdn'),
+                'country': country
+            }
+        }
+    except Exception as e:
+        return {'npa': npa, 'status': 'failed', 'detail': f"An unexpected internal error occurred during search: {str(e)}"}
 
-        did_to_buy = search_result['numbers'][0]
-        msisdn = did_to_buy.get('msisdn')
-
+async def _process_single_did_buy(did_info: dict, subaccount_creds: dict, settings: dict) -> dict:
+    """Stage 2: Purchase a single DID."""
+    msisdn = did_info['msisdn']
+    country = did_info['country']
+    try:
         buy_result, buy_status = await asyncio.to_thread(
             vonage_client.buy_did,
             username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country, msisdn=msisdn,
             log_enabled=settings['log_enabled'], treat_420_as_success=settings['treat_420_as_success_buy'], verify_on_420=settings['verify_on_420_buy']
         )
         if buy_status >= 400:
-            return BatchProvisionResult(npa=npa, status='failed', detail=f"Failed to purchase DID {msisdn}. API error: {buy_result.get('error', 'Unknown')}")
+            return {'status': 'failed', 'data': did_info, 'detail': f"Failed to purchase. API error: {buy_result.get('error', 'Unknown')}"}
         
-        final_callback_value = request.voice_callback_value
-        if request.voice_callback_type == 'sip' and '@' not in final_callback_value:
-            final_callback_value = f"{_get_national_number(msisdn, country)}@{final_callback_value}"
-        update_config = {'voiceCallbackType': request.voice_callback_type, 'voiceCallbackValue': final_callback_value}
-        
+        return {'status': 'bought', 'data': did_info}
+    except Exception as e:
+        return {'status': 'failed', 'data': did_info, 'detail': f"An unexpected internal error occurred during purchase: {str(e)}"}
+
+async def _process_single_did_configure(did_info: dict, subaccount_creds: dict, request: DIDBatchProvisionRequest, settings: dict) -> dict:
+    """Stage 3: Configure a single DID."""
+    msisdn = did_info['msisdn']
+    country = did_info['country']
+    
+    final_callback_value = request.voice_callback_value
+    if request.voice_callback_type == 'sip' and '@' not in final_callback_value:
+        final_callback_value = f"{_get_national_number(msisdn, country)}@{final_callback_value}"
+    update_config = {'voiceCallbackType': request.voice_callback_type, 'voiceCallbackValue': final_callback_value}
+    
+    try:
         update_result, update_status = await asyncio.to_thread(
             vonage_client.update_did,
             username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country, msisdn=msisdn, config=update_config,
             log_enabled=settings['log_enabled'], treat_420_as_success=settings['treat_420_as_success_configure']
         )
         
-        configuration_status = "Applied successfully."
+        detail_message = "Applied successfully."
+        status = 'configured'
         if update_status >= 400:
-            configuration_status = f"Failed to apply configuration: {update_result.get('error', 'Unknown')}"
+            detail_message = f"Provisioned but failed to apply configuration: {update_result.get('error', 'Unknown')}"
+            status = 'failed_config'
             
-        notif_payload = {
-            "groupid": groupid,
-            "did": msisdn,
-            "country": country,
-            "npa": npa,
-            "subaccount_name": subaccount_creds['account_name'],
-            "subaccount_api_key": subaccount_creds['api_key'],
-            "configuration": update_config,
-            "configuration_status": configuration_status
-        }
-        notification_service.fire_and_forget("did.provisioned", notif_payload)
-
-        if update_status >= 400:
-            return BatchProvisionResult(npa=npa, status='partial_success', provisioned_did=msisdn, detail=f"Provisioned DID {msisdn} but failed to apply configuration.")
-
-        return BatchProvisionResult(npa=npa, status='success', provisioned_did=msisdn, detail=f"Successfully provisioned and configured DID {msisdn}.")
+        return {'status': status, 'data': did_info, 'detail': detail_message, 'config_applied': update_config}
 
     except Exception as e:
-        return BatchProvisionResult(npa=npa, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
-# --- END OF FILE fastapi_app.py ---
+        return {'status': 'failed_config', 'data': did_info, 'detail': f"An unexpected internal error occurred during configuration: {str(e)}", 'config_applied': update_config}
+# --- END: MODIFICATION ---
