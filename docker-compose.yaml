@@ -1,18 +1,7 @@
 version: '3.8'
 
-x-dns: &default-dns
-  dns:
-    - 1.1.1.1
-    - 8.8.8.8
-  dns_opt:
-    - ndots:1
-    - edns0
-  # dns_search:
-  #   - your.internal.domain
-
 services:
   flask_app:
-    <<: *default-dns
     build:
       context: .
       dockerfile: Dockerfile
@@ -30,11 +19,10 @@ services:
     profiles: [ui]
 
   fastapi_app:
-    <<: *default-dns
     build:
       context: .
       dockerfile: Dockerfile
-      network: host          # <-- fixes build-time networking
+      network: host
     container_name: fastapi_provisioning_api
     ports:
       - "8000:8000"
