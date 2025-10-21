@@ -7,7 +7,10 @@ from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
-from typing import Optional, List, Dict, Any
+# --- START: MODIFICATION ---
+from typing import Optional, List, Dict, Any, Callable, Tuple
+from asyncio import Semaphore
+# --- END: MODIFICATION ---
 
 # --- Import Core Application Logic ---
 from utils.config_loader import load_config_file
@@ -134,28 +137,24 @@ class DIDUpdateItem(BaseModel):
     did: str = Field(..., description="The phone number (DID) to be updated.", pattern=r'^\d{10,15}$')
     country: Optional[str] = Field(None, description="Optional. The 2-letter ISO country code of the DID.", min_length=2, max_length=2)
 
-# --- START: MODIFICATION ---
 class DIDBatchUpdateRequest(BaseModel):
     groupid: str = Field(..., description="The group ID for the account that owns all DIDs in the list.")
     dids: List[Dict[str, Any]] = Field(..., description="A list of DIDs to update.", min_length=1)
     voice_callback_type: str = Field(..., description="The voice callback type to apply to all DIDs in the list.")
     voice_callback_value: str = Field(..., description="The voice callback value to apply to all DIDs in the list.")
     update_group_defaults: bool = Field(False, description="If true, also save these settings as the new defaults for the group.")
-# --- END: MODIFICATION ---
 
 class BatchResult(BaseModel):
     did: str
     status: str
     detail: str
 
-# --- START: MODIFICATION ---
 class DIDBatchUpdateResponse(BaseModel):
     message: str
     total_requested: int
     success_count: int
     failed_count: int
     results: Optional[List[BatchResult]] = Field(None, description="Detailed results of each operation. Only present if 'debug=true' is in the query string.")
-# --- END: MODIFICATION ---
     
 class DIDBatchProvisionRequest(BaseModel):
     groupid: str = Field(..., description="The group ID for the account that will own the provisioned DIDs.")
@@ -182,7 +181,6 @@ class DIDReleaseItem(BaseModel):
     did: str = Field(..., description="The phone number (DID) to be released.", pattern=r'^\d{10,15}$')
     country: Optional[str] = Field(None, description="Optional. The 2-letter ISO country code of the DID.", min_length=2, max_length=2)
 
-# --- START: MODIFICATION ---
 class DIDBatchReleaseRequest(BaseModel):
     groupid: str = Field(..., description="The group ID for the account that owns all DIDs in the list.")
     dids: List[Dict[str, Any]] = Field(..., description="A list of DIDs to release.", min_length=1)
@@ -193,7 +191,33 @@ class DIDBatchReleaseResponse(BaseModel):
     success_count: int
     failed_count: int
     results: Optional[List[BatchResult]] = Field(None, description="Detailed results of each operation. Only present if 'debug=true' is in the query string.")
+
+# --- START: MODIFICATION ---
+# --- Global Rate Limiting Helper ---
+
+async def _rate_limited_vonage_call(
+    semaphore: Semaphore,
+    func: Callable[..., Tuple[dict, int]],
+    *args,
+    **kwargs
+) -> Tuple[dict, int]:
+    """
+    Executes a Vonage client function under the control of a semaphore to limit concurrency.
+    
+    Args:
+        semaphore: The asyncio.Semaphore instance to use for rate limiting.
+        func: The Vonage client function to call (e.g., vonage_client.buy_did).
+        *args: Positional arguments to pass to the client function.
+        **kwargs: Keyword arguments to pass to the client function.
+
+    Returns:
+        A tuple containing the result dictionary and the status code from the client function.
+    """
+    async with semaphore:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
 # --- END: MODIFICATION ---
+
 
 # --- API Endpoints ---
 @app.on_event("startup")
@@ -245,11 +269,7 @@ async def provision_did_endpoint(request: DIDProvisionRequest, request_obj: Requ
                 "created_by": "FastAPI Provisioning Endpoint"
             }
             notification_service.fire_and_forget("subaccount.created", notif_payload)
-            # --- START: MODIFICATION ---
-            # After saving, immediately re-fetch the credentials using the canonical function
-            # This ensures we use the correctly stored and decrypted secret for the next steps.
             subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
-            # --- END: MODIFICATION ---
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save or re-fetch new subaccount credentials: {e}")
     
@@ -416,16 +436,22 @@ async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while saving the new defaults: {e}")
     return UpdateSuccessResponse(message=f"Successfully updated stored defaults for groupid '{request.groupid}'.")
 
-# --- START: MODIFICATION ---
 @app.post("/update-dids-batch", response_model=DIDBatchUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, debug: bool = False):
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     
+    # --- START: MODIFICATION ---
+    # Refresh settings from DB at the start of each request
+    settings_manager.get_all_settings()
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
     delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
     treat_420_as_success = settings_manager.get_setting('treat_420_as_success_configure', False)
+    
+    # Create a semaphore for this specific batch request
+    semaphore = Semaphore(max_concurrency)
+    # --- END: MODIFICATION ---
     
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
@@ -470,7 +496,10 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, debug: bool
                     subaccount_creds=subaccount_creds,
                     request=request,
                     log_enabled=log_enabled,
-                    treat_420_as_success=treat_420_as_success
+                    treat_420_as_success=treat_420_as_success,
+                    # --- START: MODIFICATION ---
+                    semaphore=semaphore
+                    # --- END: MODIFICATION ---
                 ) for item in batch
             ]
             api_batch_results = await asyncio.gather(*tasks)
@@ -508,9 +537,10 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, debug: bool
         response_payload.results = all_results
         
     return response_payload
-# --- END: MODIFICATION ---
 
-async def _process_single_did_update(did_item, subaccount_creds, request, log_enabled, treat_420_as_success):
+# --- START: MODIFICATION ---
+async def _process_single_did_update(did_item, subaccount_creds, request, log_enabled, treat_420_as_success, semaphore):
+# --- END: MODIFICATION ---
     try:
         country_to_use = did_item.country
         msisdn_to_use = "".join(filter(str.isdigit, did_item.did))
@@ -529,7 +559,10 @@ async def _process_single_did_update(did_item, subaccount_creds, request, log_en
         if request.voice_callback_type == 'sip' and '@' not in final_callback_value and final_callback_value != '':
             final_callback_value = f"{_get_national_number(msisdn_to_use, country_to_use)}@{final_callback_value}"
         update_config['voiceCallbackValue'] = final_callback_value
-        update_result, update_status = await asyncio.to_thread(
+        
+        # --- START: MODIFICATION ---
+        update_result, update_status = await _rate_limited_vonage_call(
+            semaphore,
             vonage_client.update_did,
             username=subaccount_creds['api_key'],
             password=subaccount_creds['api_secret'],
@@ -539,21 +572,29 @@ async def _process_single_did_update(did_item, subaccount_creds, request, log_en
             log_enabled=log_enabled,
             treat_420_as_success=treat_420_as_success
         )
+        # --- END: MODIFICATION ---
+
         if update_status >= 400:
             return BatchResult(did=did_item.did, status='failed', detail=f"Vonage API error: {update_result.get('error', 'Unknown error')}")
         return BatchResult(did=did_item.did, status='success', detail="DID updated successfully.")
     except Exception as e:
         return BatchResult(did=did_item.did, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
 
-# --- START: MODIFICATION ---
 @app.post("/release-dids-batch", response_model=DIDBatchReleaseResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, debug: bool = False):
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
     
+    # --- START: MODIFICATION ---
+    # Refresh settings from DB at the start of each request
+    settings_manager.get_all_settings()
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
     delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
+
+    # Create a semaphore for this specific batch request
+    semaphore = Semaphore(max_concurrency)
+    # --- END: MODIFICATION ---
     
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
@@ -597,7 +638,10 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, debug: bo
                     did_item=item,
                     groupid=request.groupid,
                     subaccount_creds=subaccount_creds,
-                    log_enabled=log_enabled
+                    log_enabled=log_enabled,
+                    # --- START: MODIFICATION ---
+                    semaphore=semaphore
+                    # --- END: MODIFICATION ---
                 ) for item in batch
             ]
             
@@ -621,9 +665,10 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, debug: bo
         response_payload.results = all_results
         
     return response_payload
-# --- END: MODIFICATION ---
 
-async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, subaccount_creds: dict, log_enabled: bool) -> BatchResult:
+# --- START: MODIFICATION ---
+async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, subaccount_creds: dict, log_enabled: bool, semaphore: Semaphore) -> BatchResult:
+# --- END: MODIFICATION ---
     try:
         country_to_use = did_item.country
         msisdn_to_use = "".join(filter(str.isdigit, did_item.did))
@@ -643,7 +688,9 @@ async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, su
             if not country_to_use:
                 return BatchResult(did=did_item.did, status='failed', detail="Could not auto-detect country. Please provide a 2-letter 'country' code.")
 
-        result_data, status_code = await asyncio.to_thread(
+        # --- START: MODIFICATION ---
+        result_data, status_code = await _rate_limited_vonage_call(
+            semaphore,
             vonage_client.cancel_did,
             username=subaccount_creds['api_key'],
             password=subaccount_creds['api_secret'],
@@ -651,6 +698,7 @@ async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, su
             msisdn=msisdn_to_use,
             log_enabled=log_enabled
         )
+        # --- END: MODIFICATION ---
 
         if status_code >= 400:
             return BatchResult(did=did_item.did, status='failed', detail=f"Vonage API error: {result_data.get('error', 'Unknown error')}")
@@ -674,12 +722,19 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
 
+    # --- START: MODIFICATION ---
+    # Refresh settings from DB at the start of each request
+    settings_manager.get_all_settings()
     log_enabled = settings_manager.get_setting('store_logs_enabled')
     max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
     delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
     treat_420_as_success_buy = settings_manager.get_setting('treat_420_as_success_buy', False)
     verify_on_420_buy = settings_manager.get_setting('verify_on_420_buy', False)
     treat_420_as_success_configure = settings_manager.get_setting('treat_420_as_success_configure', False)
+    
+    # Create a semaphore for this specific batch request
+    semaphore = Semaphore(max_concurrency)
+    # --- END: MODIFICATION ---
 
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
@@ -708,9 +763,7 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
                 "created_by": "FastAPI Batch Provisioning Endpoint"
             }
             notification_service.fire_and_forget("subaccount.created", notif_payload)
-            # --- START: MODIFICATION ---
             subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
-            # --- END: MODIFICATION ---
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save or re-fetch new credentials: {e}")
 
@@ -729,6 +782,9 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
                     "verify_on_420_buy": verify_on_420_buy,
                     "treat_420_as_success_configure": treat_420_as_success_configure,
                 },
+                # --- START: MODIFICATION ---
+                semaphore=semaphore
+                # --- END: MODIFICATION ---
             ) for npa in batch
         ]
         batch_results = await asyncio.gather(*tasks)
@@ -755,27 +811,47 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
         success_count=success_count, failed_count=failed_count, results=results
     )
 
-async def _process_single_did_provision(npa, groupid, subaccount_creds, request, settings):
+# --- START: MODIFICATION ---
+async def _process_single_did_provision(npa, groupid, subaccount_creds, request, settings, semaphore):
+# --- END: MODIFICATION ---
     try:
         country = 'US' if npa in NPA_DATA.get('US', []) else 'CA' if npa in NPA_DATA.get('CA', []) else None
         if not country:
             return BatchProvisionResult(npa=npa, status='failed', detail=f"NPA not found in US or CA data.")
 
         search_params = {'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': 1}
-        search_result, search_status = await asyncio.to_thread(
-            vonage_client.search_dids, subaccount_creds['api_key'], subaccount_creds['api_secret'], search_params, log_enabled=settings['log_enabled']
+        
+        # --- START: MODIFICATION ---
+        search_result, search_status = await _rate_limited_vonage_call(
+            semaphore,
+            vonage_client.search_dids,
+            subaccount_creds['api_key'],
+            subaccount_creds['api_secret'],
+            search_params,
+            log_enabled=settings['log_enabled']
         )
+        # --- END: MODIFICATION ---
+
         if search_status >= 400 or not search_result.get('numbers'):
             return BatchProvisionResult(npa=npa, status='failed', detail=f"No available numbers found. API error: {search_result.get('error', 'Unknown')}")
 
         did_to_buy = search_result['numbers'][0]
         msisdn = did_to_buy.get('msisdn')
 
-        buy_result, buy_status = await asyncio.to_thread(
+        # --- START: MODIFICATION ---
+        buy_result, buy_status = await _rate_limited_vonage_call(
+            semaphore,
             vonage_client.buy_did,
-            username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country, msisdn=msisdn,
-            log_enabled=settings['log_enabled'], treat_420_as_success=settings['treat_420_as_success_buy'], verify_on_420=settings['verify_on_420_buy']
+            username=subaccount_creds['api_key'],
+            password=subaccount_creds['api_secret'],
+            country=country,
+            msisdn=msisdn,
+            log_enabled=settings['log_enabled'],
+            treat_420_as_success=settings['treat_420_as_success_buy'],
+            verify_on_420=settings['verify_on_420_buy']
         )
+        # --- END: MODIFICATION ---
+
         if buy_status >= 400:
             return BatchProvisionResult(npa=npa, status='failed', detail=f"Failed to purchase DID {msisdn}. API error: {buy_result.get('error', 'Unknown')}")
         
@@ -784,11 +860,19 @@ async def _process_single_did_provision(npa, groupid, subaccount_creds, request,
             final_callback_value = f"{_get_national_number(msisdn, country)}@{final_callback_value}"
         update_config = {'voiceCallbackType': request.voice_callback_type, 'voiceCallbackValue': final_callback_value}
         
-        update_result, update_status = await asyncio.to_thread(
+        # --- START: MODIFICATION ---
+        update_result, update_status = await _rate_limited_vonage_call(
+            semaphore,
             vonage_client.update_did,
-            username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country, msisdn=msisdn, config=update_config,
-            log_enabled=settings['log_enabled'], treat_420_as_success=settings['treat_420_as_success_configure']
+            username=subaccount_creds['api_key'],
+            password=subaccount_creds['api_secret'],
+            country=country,
+            msisdn=msisdn,
+            config=update_config,
+            log_enabled=settings['log_enabled'],
+            treat_420_as_success=settings['treat_420_as_success_configure']
         )
+        # --- END: MODIFICATION ---
         
         configuration_status = "Applied successfully."
         if update_status >= 400:
