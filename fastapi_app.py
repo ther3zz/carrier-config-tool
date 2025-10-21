@@ -662,7 +662,7 @@ async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, su
 async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
     """
     Provisions DIDs in a multi-stage batch process (Search, Buy, Configure)
-    to avoid API rate limiting.
+    to avoid API rate limiting and handles duplicate NPA requests.
     """
     if credentials_manager.STORAGE_MODE != 'db':
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Endpoint not available in 'file' storage mode.")
@@ -713,8 +713,8 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save or re-fetch new credentials: {e}")
 
     # --- STAGE 1: Search for DIDs ---
-    all_results = {} # Use a dict to store results by NPA
-    npas_to_search = list(set(request.npas)) # Deduplicate NPAs
+    final_results = []
+    npas_to_search = request.npas # Use the original list with duplicates
     dids_to_buy = []
 
     for i in range(0, len(npas_to_search), max_concurrency):
@@ -728,7 +728,7 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
             if res['status'] == 'found':
                 dids_to_buy.append(res['data'])
             else:
-                all_results[res['npa']] = BatchProvisionResult(npa=res['npa'], status='failed', detail=res['detail'])
+                final_results.append(BatchProvisionResult(npa=res['npa'], status='failed', detail=res['detail']))
         if i + max_concurrency < len(npas_to_search):
             await asyncio.sleep(delay_ms / 1000.0)
 
@@ -744,10 +744,11 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
             buy_results = await asyncio.gather(*tasks)
             for res in buy_results:
                 npa = res['data']['npa']
+                msisdn = res['data']['msisdn']
                 if res['status'] == 'bought':
                     dids_to_configure.append(res['data'])
                 else:
-                    all_results[npa] = BatchProvisionResult(npa=npa, status='failed', detail=res['detail'], provisioned_did=res['data']['msisdn'])
+                    final_results.append(BatchProvisionResult(npa=npa, status='failed', detail=res['detail'], provisioned_did=msisdn))
             if i + max_concurrency < len(dids_to_buy):
                 await asyncio.sleep(delay_ms / 1000.0)
     
@@ -763,24 +764,25 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
             for res in configure_results:
                 npa = res['data']['npa']
                 msisdn = res['data']['msisdn']
-                if res['status'] == 'configured':
-                    all_results[npa] = BatchProvisionResult(npa=npa, status='success', provisioned_did=msisdn, detail=f"Successfully provisioned and configured DID {msisdn}.")
-                else:
-                    all_results[npa] = BatchProvisionResult(npa=npa, status='partial_success', provisioned_did=msisdn, detail=res['detail'])
                 
-                # Fire notification regardless of config outcome
+                if res['status'] == 'configured':
+                    final_results.append(BatchProvisionResult(npa=npa, status='success', provisioned_did=msisdn, detail=f"Successfully provisioned and configured DID {msisdn}."))
+                else: # 'failed_config'
+                    final_results.append(BatchProvisionResult(npa=npa, status='partial_success', provisioned_did=msisdn, detail=res['detail']))
+                
+                # Fire notification after purchase, regardless of config outcome
                 notification_service.fire_and_forget("did.provisioned", {
                     "groupid": request.groupid, "did": msisdn, "country": res['data']['country'], "npa": npa,
                     "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'],
                     "configuration": res['config_applied'], "configuration_status": res['detail']
                 })
+
             if i + max_concurrency < len(dids_to_configure):
                 await asyncio.sleep(delay_ms / 1000.0)
 
     # --- Finalize and respond ---
-    final_results_list = list(all_results.values())
-    success_count = sum(1 for r in final_results_list if r.status in ['success', 'partial_success'])
-    failed_count = len(npas_to_search) - success_count
+    success_count = sum(1 for r in final_results if r.status in ['success', 'partial_success'])
+    failed_count = len(request.npas) - success_count
     final_message = "Batch provisioning process completed."
 
     if request.update_group_defaults and success_count > 0:
@@ -795,8 +797,8 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
             final_message += f" However, failed to update the stored defaults for the group: {e}"
 
     return DIDBatchProvisionResponse(
-        message=final_message, total_processed=len(npas_to_search),
-        success_count=success_count, failed_count=failed_count, results=final_results_list
+        message=final_message, total_processed=len(request.npas),
+        success_count=success_count, failed_count=failed_count, results=final_results
     )
 
 
@@ -819,7 +821,7 @@ async def _process_single_did_search(npa: str, subaccount_creds: dict, settings:
             'npa': npa,
             'status': 'found',
             'data': {
-                'npa': npa,
+                'npa': npa, # Carry the original NPA through
                 'msisdn': did_info.get('msisdn'),
                 'country': country
             }
