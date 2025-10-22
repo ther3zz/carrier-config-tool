@@ -5,6 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import json
 import copy # Import the copy module for deep copying request details
+from fastapi import Request # Import for type hinting
 
 def setup_logging():
     """
@@ -63,6 +64,21 @@ def _get_account_logger(account_id: str) -> logging.Logger:
         
     return logger
 
+# --- START: MODIFICATION ---
+def _obfuscate_payload(payload: dict) -> dict:
+    """
+    Takes a payload dictionary, deep copies it, and obfuscates common sensitive keys.
+    """
+    loggable_payload = copy.deepcopy(payload)
+    sensitive_keys = ['master_key', 'api_key', 'api_secret', 'secret', 'password', 'old_master_key', 'new_master_key']
+
+    for key, value in loggable_payload.items():
+        if key in sensitive_keys and isinstance(value, str) and value:
+            loggable_payload[key] = f"***{value[-4:]}" if len(value) > 4 else "***"
+    
+    return loggable_payload
+# --- END: MODIFICATION ---
+
 def _obfuscate_credentials(request_details: dict) -> dict:
     """
     Takes a request details dictionary, deep copies it, and obfuscates credentials.
@@ -84,6 +100,27 @@ def _obfuscate_credentials(request_details: dict) -> dict:
                 loggable_details["Payload"][key] = f"***{secret[-4:]}" if len(secret) > 4 else "***"
 
     return loggable_details
+
+# --- START: MODIFICATION ---
+def log_incoming_request(request: Request, payload: dict):
+    """
+    Logs an incoming FastAPI request to the main system log.
+    """
+    try:
+        system_logger = logging.getLogger() # Get the root logger
+        
+        log_entry = {
+            "event_type": "IncomingFastAPIRequest",
+            "client_ip": request.client.host,
+            "method": request.method,
+            "path": request.url.path,
+            "payload": _obfuscate_payload(payload)
+        }
+        system_logger.info(json.dumps(log_entry))
+    except Exception as e:
+        system_logger = logging.getLogger("system")
+        system_logger.error(f"Failed to write incoming request log: {e}")
+# --- END: MODIFICATION ---
 
 def log_request_response(operation_name, request_details, response_data, status_code, account_id):
     """
