@@ -9,10 +9,8 @@ import threading
 from datetime import datetime, timezone
 
 from . import settings_manager
-
 # --- START: MODIFICATION ---
-# REMOVED: The global async_client is removed to prevent it from being tied to a closed event loop.
-# async_client = httpx.AsyncClient()
+from . import logger # Import the logger module
 # --- END: MODIFICATION ---
 
 async def send_notification(event_type: str, data: dict):
@@ -21,6 +19,10 @@ async def send_notification(event_type: str, data: dict):
     Checks both the master switch and event-specific switches before sending.
     Supports both JSON and flattened form-urlencoded content types.
     """
+    # --- START: MODIFICATION ---
+    notification_logger = logger.get_notification_logger()
+    # --- END: MODIFICATION ---
+
     if not settings_manager.get_setting('notifications_enabled'):
         return
 
@@ -34,18 +36,19 @@ async def send_notification(event_type: str, data: dict):
     event_key = event_setting_map.get(event_type)
     
     if not event_key or not settings_manager.get_setting(event_key):
+        # Using print for cli feedback, but not logging as it's an intentional skip
         print(f"Notification Service: Skipping event '{event_type}' as it is disabled in settings.")
         return
 
     webhook_url = settings_manager.get_setting('notifications_webhook_url')
     if not webhook_url:
+        # Using print for cli feedback, but not logging as it's a config issue
         print(f"Notification Service: Aborting send for '{event_type}'. Webhook URL is not configured.")
         return
 
     secret = settings_manager.get_setting('notifications_secret')
     content_type = settings_manager.get_setting('notifications_content_type', 'application/json')
 
-    # Construct the original, canonical payload structure
     payload = {
         'event_type': event_type,
         'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -55,24 +58,24 @@ async def send_notification(event_type: str, data: dict):
     headers = {}
     request_kwargs = {'timeout': 10.0}
     payload_for_signing = None
+    final_payload_sent = {}
 
     if content_type == 'application/x-www-form-urlencoded':
-        # Create a new, flat dictionary by merging the top-level fields
-        # with the fields from the nested 'data' dictionary.
         flat_form_data = {
             'event_type': payload['event_type'],
             'timestamp': payload['timestamp'],
-            **payload['data']  # Unpack the 'data' dictionary here
+            **payload['data']
         }
         request_kwargs['data'] = flat_form_data
+        final_payload_sent = flat_form_data
         
-        # For signature consistency, we always sign the canonical JSON representation
         if secret:
             payload_for_signing = json.dumps(payload).encode('utf-8')
-    else:  # Default to application/json
+    else: # Default to application/json
         json_payload_bytes = json.dumps(payload).encode('utf-8')
         headers['Content-Type'] = 'application/json'
         request_kwargs['content'] = json_payload_bytes
+        final_payload_sent = payload
         if secret:
             payload_for_signing = json_payload_bytes
 
@@ -83,19 +86,40 @@ async def send_notification(event_type: str, data: dict):
     
     request_kwargs['headers'] = headers
 
-    # --- START: MODIFICATION ---
-    # Create the client within an 'async with' block. This ensures the client
-    # is created and closed within the same event loop managed by 'asyncio.run()'.
+    # --- START: MODIFICATION (Log request and response) ---
+    log_entry = {
+        "event_type": event_type,
+        "webhook_url": webhook_url,
+        "request": {
+            "headers": headers,
+            "payload": final_payload_sent
+        },
+        "response": {}
+    }
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(webhook_url, **request_kwargs)
+            
+            log_entry["response"] = {
+                "status_code": response.status_code,
+                "headers": dict(response.headers),
+                "body": response.text
+            }
+            
             response.raise_for_status() 
+            notification_logger.info(json.dumps(log_entry))
             print(f"Notification Sent: Event '{event_type}' to {webhook_url} as {content_type}. Status: {response.status_code}")
-    # --- END: MODIFICATION ---
+
     except httpx.RequestError as e:
+        log_entry["response"] = {"error": f"RequestError: {str(e)}"}
+        notification_logger.error(json.dumps(log_entry))
         print(f"Notification Error: Failed to send event '{event_type}' to {webhook_url}. Details: {e}")
     except Exception as e:
+        log_entry["response"] = {"error": f"UnexpectedError: {str(e)}"}
+        notification_logger.error(json.dumps(log_entry))
         print(f"Notification Error: An unexpected error occurred while sending webhook. Details: {e}")
+    # --- END: MODIFICATION ---
 
 
 def _run_async_in_thread(coro):

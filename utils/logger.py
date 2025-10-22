@@ -65,6 +65,28 @@ def _get_account_logger(account_id: str) -> logging.Logger:
     return logger
 
 # --- START: MODIFICATION ---
+def get_notification_logger() -> logging.Logger:
+    """
+    Gets a specific logger for notification events, writing to 'notifications.log'.
+    """
+    log_dir = 'logs'
+    log_path = os.path.join(log_dir, 'notifications.log')
+    logger_name = 'notifications'
+
+    logger = logging.getLogger(logger_name)
+    
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        logger.propagate = False 
+        
+        handler = RotatingFileHandler(log_path, maxBytes=1024 * 1024 * 2, backupCount=3)
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        
+    return logger
+# --- END: MODIFICATION ---
+
 def _obfuscate_payload(payload: dict) -> dict:
     """
     Takes a payload dictionary, deep copies it, and obfuscates common sensitive keys.
@@ -77,7 +99,6 @@ def _obfuscate_payload(payload: dict) -> dict:
             loggable_payload[key] = f"***{value[-4:]}" if len(value) > 4 else "***"
     
     return loggable_payload
-# --- END: MODIFICATION ---
 
 def _obfuscate_credentials(request_details: dict) -> dict:
     """
@@ -101,7 +122,6 @@ def _obfuscate_credentials(request_details: dict) -> dict:
 
     return loggable_details
 
-# --- START: MODIFICATION ---
 def log_incoming_request(request: Request, payload: dict):
     """
     Logs an incoming FastAPI request to the main system log.
@@ -120,7 +140,6 @@ def log_incoming_request(request: Request, payload: dict):
     except Exception as e:
         system_logger = logging.getLogger("system")
         system_logger.error(f"Failed to write incoming request log: {e}")
-# --- END: MODIFICATION ---
 
 def log_request_response(operation_name, request_details, response_data, status_code, account_id):
     """
