@@ -657,7 +657,6 @@ async def _process_single_did_release(did_item: DIDReleaseItem, groupid: str, su
     except Exception as e:
         return BatchResult(did=did_item.did, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
 
-# --- START: MODIFICATION ---
 @app.post("/provision-dids-batch", response_model=DIDBatchProvisionResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
     """
@@ -680,7 +679,7 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
         "treat_420_as_success_configure": settings_manager.get_setting('treat_420_as_success_configure', False),
     }
 
-    # --- Subaccount lookup and creation (same as before) ---
+    # --- Subaccount lookup and creation ---
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
     except ValueError:
@@ -714,7 +713,7 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
 
     # --- STAGE 1: Search for DIDs ---
     final_results = []
-    npas_to_search = request.npas # Use the original list with duplicates
+    npas_to_search = request.npas
     dids_to_buy = []
 
     for i in range(0, len(npas_to_search), max_concurrency):
@@ -735,6 +734,9 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
     # --- STAGE 2: Buy DIDs ---
     dids_to_configure = []
     if dids_to_buy:
+        # --- START: MODIFICATION (Inter-stage delay) ---
+        await asyncio.sleep(delay_ms / 1000.0)
+        # --- END: MODIFICATION ---
         for i in range(0, len(dids_to_buy), max_concurrency):
             batch = dids_to_buy[i:i + max_concurrency]
             tasks = [
@@ -754,6 +756,9 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
     
     # --- STAGE 3: Configure DIDs ---
     if dids_to_configure:
+        # --- START: MODIFICATION (Inter-stage delay) ---
+        await asyncio.sleep(delay_ms / 1000.0)
+        # --- END: MODIFICATION ---
         for i in range(0, len(dids_to_configure), max_concurrency):
             batch = dids_to_configure[i:i + max_concurrency]
             tasks = [
@@ -770,7 +775,6 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest):
                 else: # 'failed_config'
                     final_results.append(BatchProvisionResult(npa=npa, status='partial_success', provisioned_did=msisdn, detail=res['detail']))
                 
-                # Fire notification after purchase, regardless of config outcome
                 notification_service.fire_and_forget("did.provisioned", {
                     "groupid": request.groupid, "did": msisdn, "country": res['data']['country'], "npa": npa,
                     "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'],
@@ -821,7 +825,7 @@ async def _process_single_did_search(npa: str, subaccount_creds: dict, settings:
             'npa': npa,
             'status': 'found',
             'data': {
-                'npa': npa, # Carry the original NPA through
+                'npa': npa,
                 'msisdn': did_info.get('msisdn'),
                 'country': country
             }
@@ -873,4 +877,3 @@ async def _process_single_did_configure(did_info: dict, subaccount_creds: dict, 
 
     except Exception as e:
         return {'status': 'failed_config', 'data': did_info, 'detail': f"An unexpected internal error occurred during configuration: {str(e)}", 'config_applied': update_config}
-# --- END: MODIFICATION ---
