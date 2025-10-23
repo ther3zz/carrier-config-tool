@@ -158,22 +158,30 @@ def update_subaccount():
 
 
 # --- PSIP Trunking Endpoints ---
+# --- START: MODIFICATION ---
+def _get_psip_form_payload(data: dict) -> dict:
+    """Helper to extract PSIP domain payload from a request."""
+    return {
+        'name': data.get('name'),
+        'trunk_name': data.get('trunk_name'),
+        'tls': data.get('tls'),
+        'digest_auth': data.get('digest_auth'),
+        'srtp': data.get('srtp'),
+        'acl': data.get('acl', []),
+        'domain_type': data.get('domain_type')
+    }
+# --- END: MODIFICATION ---
+
 @vonage_bp.route('/psip/create', methods=['POST'])
 def create_psip_domain():
     data = request.get_json()
     try:
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
-
-        payload = {
-            'name': data.get('name'),
-            'trunk_name': data.get('trunk_name'),
-            'tls': data.get('tls'),
-            'digest_auth': data.get('digest_auth'),
-            'srtp': data.get('srtp'),
-            'acl': data.get('acl', []),
-            'domain_type': data.get('domain_type')
-        }
+        
+        # --- START: MODIFICATION ---
+        payload = _get_psip_form_payload(data)
+        # --- END: MODIFICATION ---
 
         result, status_code = vonage_client.create_psip(
             username=creds['api_key'],
@@ -208,6 +216,60 @@ def get_psip_domains():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+# --- START: MODIFICATION ---
+@vonage_bp.route('/psip/update', methods=['POST'])
+def update_psip_domain():
+    data = request.get_json()
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        domain_name = data.get('original_domain_name')
+        if not domain_name:
+            return jsonify({"error": "Original domain name is required for update."}), 400
+
+        payload = _get_psip_form_payload(data)
+
+        result, status_code = vonage_client.update_psip_domain(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            domain_name=domain_name,
+            payload=payload,
+            log_enabled=log_enabled
+        )
+
+        if status_code < 400:
+            result['message'] = f"Successfully updated PSIP domain '{payload.get('name')}'."
+        
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
+
+@vonage_bp.route('/psip/delete', methods=['POST'])
+def delete_psip_domain():
+    data = request.get_json()
+    try:
+        creds = _get_credentials_from_request(data)
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        domain_name = data.get('domain_name')
+        if not domain_name:
+            return jsonify({"error": "Domain name is required for deletion."}), 400
+
+        result, status_code = vonage_client.delete_psip_domain(
+            username=creds['api_key'],
+            password=creds['api_secret'],
+            domain_name=domain_name,
+            log_enabled=log_enabled
+        )
+        
+        return jsonify(result), status_code
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
+# --- END: MODIFICATION ---
 
 
 # --- DID Management Endpoints ---
@@ -301,7 +363,6 @@ def release_did():
             log_enabled=log_enabled
         )
 
-        # --- START: MODIFICATION ---
         if status_code < 400:
             notification_payload = {
                 "account_name": creds.get('account_name'),
@@ -310,7 +371,6 @@ def release_did():
                 "country": data.get('country')
             }
             notification_service.fire_and_forget("did.released", notification_payload)
-        # --- END: MODIFICATION ---
 
         return jsonify(result), status_code
     except ValueError as e:
