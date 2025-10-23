@@ -9,9 +9,7 @@ from utils.logger import log_request_response
 NEXMO_PSIP_API_URL = 'https://api.nexmo.com/v1/psip/'
 NEXMO_SEARCH_API_URL = 'https://rest.nexmo.com/number/search'
 NEXMO_BUY_API_URL = 'https://rest.nexmo.com/number/buy'
-# --- START: MODIFICATION ---
 NEXMO_CANCEL_API_URL = 'https://rest.nexmo.com/number/cancel' # New endpoint
-# --- END: MODIFICATION ---
 NEXMO_UPDATE_API_URL = 'https://rest.nexmo.com/number/update'
 NEXMO_OWNED_API_URL = 'https://rest.nexmo.com/account/numbers'
 VONAGE_ACCOUNTS_API_URL = 'https://api.nexmo.com/accounts'
@@ -92,6 +90,7 @@ def get_psip_domains(username, password, log_enabled=False):
         if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
     return response_data, status_code
 
+# --- START: MODIFICATION ---
 def update_psip_domain(username, password, domain_name, payload, log_enabled=False):
     operation_name = f"Vonage PSIP Update Domain ({domain_name})"
     url = f"{NEXMO_PSIP_API_URL.rstrip('/')}/{domain_name}"
@@ -127,6 +126,7 @@ def delete_psip_domain(username, password, domain_name, log_enabled=False):
     finally:
         if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
     return response_data, status_code
+# --- END: MODIFICATION ---
 
 def search_dids(username, password, search_params, log_enabled=False):
     operation_name = "Vonage DID Search"
@@ -204,7 +204,6 @@ def buy_did(username, password, country, msisdn, target_api_key=None, log_enable
     return response_data, status_code
 
 
-# --- START: MODIFICATION (Add cancel_did function) ---
 def cancel_did(username, password, country, msisdn, log_enabled=False):
     """Cancels (releases) a specific Vonage DID from an account."""
     cancel_payload = {'country': country, 'msisdn': msisdn}
@@ -248,7 +247,6 @@ def cancel_did(username, password, country, msisdn, log_enabled=False):
             log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
             
     return response_data, status_code
-# --- END: MODIFICATION ---
 
 
 def update_did(username, password, country, msisdn, config, log_enabled=False, treat_420_as_success=False):
