@@ -237,7 +237,82 @@ function renderPsipDomains() {
     });
 }
 
-export async function handlePsipDomainActions(event) { /* Stub for future implementation */ }
+// --- START: MODIFICATION ---
+export async function handlePsipDomainActions(event) {
+    const target = event.target;
+    event.preventDefault();
+
+    if (target.classList.contains('save-psip-changes-btn')) {
+        const form = target.closest('.vonage-psip-domain-form');
+        const originalName = form.querySelector('.original-domain-name').value;
+        displayResponse(`Updating PSIP domain '${originalName}'...`, 'pending');
+
+        try {
+            const auth = getAuthPayload('vonage_manage_psip');
+            const payload = {
+                ...auth,
+                original_domain_name: originalName,
+                name: form.querySelector('.domain-name').value,
+                trunk_name: form.querySelector('.trunk-name').value,
+                tls: form.querySelector('.tls').value,
+                digest_auth: form.querySelector('.digest-auth').checked,
+                srtp: form.querySelector('.srtp').value,
+                acl: form.querySelector('.acl').value.split('\n').map(ip => ip.trim()).filter(Boolean),
+                domain_type: form.querySelector('.domain-type').value
+            };
+
+            const response = await apiFetch('/api/vonage/psip/update', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            
+            if (!response.ok) throw (data);
+            
+            handleBackendResponse(data);
+            // Refresh the list after a successful update
+            document.getElementById('vonageFetchPsipDomainsForm').requestSubmit();
+
+        } catch (error) {
+            handleBackendResponse(error); // handleBackendResponse can handle error objects
+        }
+    } else if (target.classList.contains('delete-psip-domain-btn')) {
+        const form = target.closest('.vonage-psip-domain-form');
+        const domainName = form.querySelector('.domain-name').value;
+
+        if (!confirm(`Are you sure you want to permanently delete the PSIP domain '${domainName}'? This cannot be undone.`)) {
+            displayResponse("Delete operation cancelled.", "pending");
+            return;
+        }
+
+        displayResponse(`Deleting PSIP domain '${domainName}'...`, 'pending');
+        try {
+            const auth = getAuthPayload('vonage_manage_psip');
+            const payload = { ...auth, domain_name: domainName };
+            const response = await apiFetch('/api/vonage/psip/delete', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            
+            if (!response.ok) throw (data);
+            
+            handleBackendResponse(data);
+             // Refresh the list after a successful deletion
+            document.getElementById('vonageFetchPsipDomainsForm').requestSubmit();
+
+        } catch (error) {
+            handleBackendResponse(error);
+        }
+
+    } else if (target.classList.contains('cancel-psip-edit-btn')) {
+        // Close the details panel to cancel editing
+        target.closest('details').open = false;
+        // Re-render the list from state to discard any user changes in the form
+        renderPsipDomains();
+    }
+}
+// --- END: MODIFICATION ---
 
 
 // --- DID MANAGEMENT (Search, Buy, Configure, Modify, Release) ---
