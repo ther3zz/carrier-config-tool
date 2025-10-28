@@ -1,3 +1,5 @@
+# --- START OF FILE fastapi_app.py ---
+
 import os
 import asyncio
 from collections import Counter
@@ -357,6 +359,7 @@ async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest, re
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while saving the new defaults: {e}")
     return UpdateSuccessResponse(message=f"Successfully updated stored defaults for groupid '{request.groupid}'.")
 
+# --- START: MODIFICATION ---
 @app.post("/update-dids-batch", response_model=DIDBatchUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, request_obj: Request, debug: bool = False):
     logger.log_incoming_request(request_obj, request.model_dump())
@@ -411,12 +414,16 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, request_obj
             final_message += f" However, failed to update the stored defaults for the group: {e}"
             
     if success_count > 0:
-        successful_dids = [{'did': r.did, 'detail': r.detail} for r in all_results if r.status == 'success']
+        successful_dids = [r.did for r in all_results if r.status == 'success']
         notif_payload = {
-            "groupid": request.groupid, "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'],
-            "total_successful": success_count, "total_failed": failed_count,
-            "updated_dids": successful_dids,
-            "applied_configuration": {'voice_callback_type': request.voice_callback_type, 'voice_callback_value': request.voice_callback_value}
+            "groupid": request.groupid,
+            "subaccount_name": subaccount_creds['account_name'],
+            "subaccount_api_key": subaccount_creds['api_key'],
+            "total_successful": success_count,
+            "total_failed": failed_count,
+            "updated_dids": ",".join(successful_dids),
+            "applied_voice_callback_type": request.voice_callback_type,
+            "applied_voice_callback_value": request.voice_callback_value
         }
         notification_service.fire_and_forget("did.updated.batch", notif_payload)
 
@@ -465,7 +472,7 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, request_o
             api_batch_results = await asyncio.gather(*tasks)
             for res in api_batch_results:
                 if res['status'] == 'success':
-                    successful_releases_for_notif.append({'did': res['did'], 'country': res['country']})
+                    successful_releases_for_notif.append(res['did'])
                 all_results.append(BatchResult(did=res['did'], status=res['status'], detail=res['detail']))
             if i + max_concurrency < len(dids_to_process):
                 await asyncio.sleep(delay_ms / 1000.0)
@@ -475,9 +482,12 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, request_o
     
     if successful_releases_for_notif:
         notif_payload = {
-            "groupid": request.groupid, "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'],
-            "total_successful": len(successful_releases_for_notif), "total_failed": failed_count,
-            "released_dids": successful_releases_for_notif
+            "groupid": request.groupid,
+            "subaccount_name": subaccount_creds['account_name'],
+            "subaccount_api_key": subaccount_creds['api_key'],
+            "total_successful": len(successful_releases_for_notif),
+            "total_failed": failed_count,
+            "released_dids": ",".join(successful_releases_for_notif)
         }
         notification_service.fire_and_forget("did.released.batch", notif_payload)
 
@@ -485,7 +495,6 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, request_o
     if debug:
         response_payload.results = all_results
     return response_payload
-
 
 @app.post("/provision-dids-batch", response_model=DIDBatchProvisionResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, request_obj: Request):
@@ -518,20 +527,16 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
     final_results, dids_to_buy, dids_to_configure = [], [], []
     provisioned_for_notif = []
 
-    # --- STAGE 1: Search for DIDs (Grouped by NPA) ---
+    # --- STAGE 1: Search ---
     npa_counts = Counter(request.npas)
-    unique_npas = list(npa_counts.keys())
-    npas_for_retry = {}
+    unique_npas, npas_for_retry = list(npa_counts.keys()), {}
     for i in range(0, len(unique_npas), max_concurrency):
         batch_results = await asyncio.gather(*[_process_npa_search(npa, npa_counts[npa], subaccount_creds, api_settings) for npa in unique_npas[i:i+max_concurrency]])
         for res in batch_results:
             dids_to_buy.extend(res['found_dids'])
-            if res['failures'] > 0:
-                final_results.extend([BatchProvisionResult(npa=res['npa'], status='failed', detail=res['detail'])] * res['failures'])
-            if res.get('status_code') == 429:
-                npas_for_retry[res['npa']] = res['failures'] if res['failures'] > 0 else npa_counts[res['npa']]
+            if res['failures'] > 0: final_results.extend([BatchProvisionResult(npa=res['npa'], status='failed', detail=res['detail'])] * res['failures'])
+            if res.get('status_code') == 429: npas_for_retry[res['npa']] = res['failures'] if res['failures'] > 0 else npa_counts[res['npa']]
         if i + max_concurrency < len(unique_npas): await asyncio.sleep(delay_ms / 1000.0)
-
     if npas_for_retry:
         await asyncio.sleep(delay_ms / 1000.0)
         unique_npas_retry = list(npas_for_retry.keys())
@@ -539,13 +544,11 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
             batch_results = await asyncio.gather(*[_process_npa_search(npa, npas_for_retry[npa], subaccount_creds, api_settings) for npa in unique_npas_retry[i:i+max_concurrency]])
             for res in batch_results:
                 dids_to_buy.extend(res['found_dids'])
-                if res['failures'] > 0:
-                    final_results.extend([BatchProvisionResult(npa=res['npa'], status='failed', detail=f"Failed on retry: {res['detail']}")] * res['failures'])
+                if res['failures'] > 0: final_results.extend([BatchProvisionResult(npa=res['npa'], status='failed', detail=f"Failed on retry: {res['detail']}")] * res['failures'])
             if i + max_concurrency < len(unique_npas_retry): await asyncio.sleep(delay_ms / 1000.0)
 
-    # --- STAGE 2: Buy DIDs ---
+    # --- STAGE 2: Buy ---
     if dids_to_buy:
-        # (The buy and configure stages remain the same as they operate on a flat list of unique DIDs)
         await asyncio.sleep(delay_ms / 1000.0)
         dids_to_buy_process, dids_for_retry = dids_to_buy, []
         for i in range(0, len(dids_to_buy_process), max_concurrency):
@@ -564,14 +567,14 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
                     else: final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='failed', detail=f"Failed on retry: {res['detail']}", provisioned_did=res['data']['msisdn']))
                 if i + max_concurrency < len(dids_for_retry): await asyncio.sleep(delay_ms / 1000.0)
 
-    # --- STAGE 3: Configure DIDs ---
+    # --- STAGE 3: Configure ---
     if dids_to_configure:
         await asyncio.sleep(delay_ms / 1000.0)
         dids_to_configure_process, dids_for_retry = dids_to_configure, []
         for i in range(0, len(dids_to_configure_process), max_concurrency):
             batch_results = await asyncio.gather(*[_process_single_did_configure(did, subaccount_creds, request, api_settings) for did in dids_to_configure_process[i:i+max_concurrency]])
             for res in batch_results:
-                provisioned_for_notif.append({"did": res['data']['msisdn'], "country": res['data']['country'], "npa": res['data']['npa'], "configuration": res['config_applied'], "configuration_status": res['detail']})
+                provisioned_for_notif.append({"did": res['data']['msisdn'], "configuration_status": res['detail']})
                 if res['status'] == 'configured': final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='success', provisioned_did=res['data']['msisdn'], detail=res['detail']))
                 elif res.get('status_code') == 429: dids_for_retry.append(res['data'])
                 else: final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='partial_success', provisioned_did=res['data']['msisdn'], detail=res['detail']))
@@ -581,7 +584,7 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
             for i in range(0, len(dids_for_retry), max_concurrency):
                 batch_results = await asyncio.gather(*[_process_single_did_configure(did, subaccount_creds, request, api_settings) for did in dids_for_retry[i:i+max_concurrency]])
                 for res in batch_results:
-                    provisioned_for_notif.append({"did": res['data']['msisdn'], "country": res['data']['country'], "npa": res['data']['npa'], "configuration": res['config_applied'], "configuration_status": f"Success on retry: {res['detail']}"})
+                    provisioned_for_notif.append({"did": res['data']['msisdn'], "configuration_status": f"Success on retry: {res['detail']}"})
                     if res['status'] == 'configured': final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='success', provisioned_did=res['data']['msisdn'], detail=f"Success on retry: {res['detail']}"))
                     else: final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='partial_success', provisioned_did=res['data']['msisdn'], detail=f"Failed on retry: {res['detail']}"))
                 if i + max_concurrency < len(dids_for_retry): await asyncio.sleep(delay_ms / 1000.0)
@@ -590,7 +593,12 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
     success_count = sum(1 for r in final_results if r.status in ['success', 'partial_success'])
     failed_count = len(request.npas) - success_count
     if provisioned_for_notif:
-        notif_payload = {"groupid": request.groupid, "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'], "total_successful": len(provisioned_for_notif), "provisioned_dids": provisioned_for_notif}
+        notif_payload = {"groupid": request.groupid, "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'], "total_provisioned": len(provisioned_for_notif), "provisioned_dids": ",".join([p['did'] for p in provisioned_for_notif]), "applied_voice_callback_type": request.voice_callback_type, "applied_voice_callback_value": request.voice_callback_value}
+        config_errors = [f"DID {p['did']}: {p['configuration_status']}" for p in provisioned_for_notif if "Applied successfully" not in p['configuration_status']]
+        if not config_errors:
+            notif_payload['configuration_status'] = "All DIDs configured successfully."
+        else:
+            notif_payload['configuration_errors'] = ", ".join(config_errors)
         notification_service.fire_and_forget("did.provisioned.batch", notif_payload)
     final_message = "Batch provisioning process completed."
     if request.update_group_defaults and success_count > 0:
@@ -627,18 +635,14 @@ async def _process_npa_search(npa: str, count: int, subaccount_creds: dict, sett
         country = 'US' if npa in NPA_DATA.get('US', []) else 'CA' if npa in NPA_DATA.get('CA', []) else None
         if not country:
             return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': "NPA not found in US or CA data.", 'status_code': 400}
-        
         search_params = {'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': count}
         search_result, search_status = await asyncio.to_thread(vonage_client.search_dids, subaccount_creds['api_key'], subaccount_creds['api_secret'], search_params, log_enabled=settings['log_enabled'])
-        
         if search_status >= 400 or not search_result.get('numbers'):
             detail = f"No available numbers found. API error: {search_result.get('error', 'Unknown')}"
             return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': detail, 'status_code': search_status}
-        
         found_dids = [{'npa': npa, 'msisdn': did.get('msisdn'), 'country': country} for did in search_result['numbers']]
         failures = count - len(found_dids)
         detail = "Successfully found numbers." if failures == 0 else f"Found {len(found_dids)} of {count} requested numbers."
-        
         return {'npa': npa, 'found_dids': found_dids, 'failures': failures, 'detail': detail, 'status_code': 200}
     except Exception as e:
         return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': f"An unexpected internal error occurred during search: {str(e)}", 'status_code': 500}
@@ -668,3 +672,4 @@ async def _process_single_did_configure(did_info: dict, subaccount_creds: dict, 
         return {'status': status, 'data': did_info, 'detail': detail_message, 'config_applied': update_config, 'status_code': update_status}
     except Exception as e:
         return {'status': 'failed_config', 'data': did_info, 'detail': f"An unexpected internal error occurred during configuration: {str(e)}", 'config_applied': update_config, 'status_code': 500}
+# --- END: MODIFICATION ---
