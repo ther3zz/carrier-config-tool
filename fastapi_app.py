@@ -1,7 +1,6 @@
-# --- START OF FILE fastapi_app.py ---
-
 import os
 import asyncio
+from collections import Counter
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -358,7 +357,6 @@ async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest, re
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while saving the new defaults: {e}")
     return UpdateSuccessResponse(message=f"Successfully updated stored defaults for groupid '{request.groupid}'.")
 
-# --- START: MODIFICATION ---
 @app.post("/update-dids-batch", response_model=DIDBatchUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, request_obj: Request, debug: bool = False):
     logger.log_incoming_request(request_obj, request.model_dump())
@@ -465,7 +463,7 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, request_o
             batch = dids_to_process[i:i + max_concurrency]
             tasks = [_process_single_did_release(did_item=item, subaccount_creds=subaccount_creds, log_enabled=log_enabled) for item in batch]
             api_batch_results = await asyncio.gather(*tasks)
-            for i, res in enumerate(api_batch_results):
+            for res in api_batch_results:
                 if res['status'] == 'success':
                     successful_releases_for_notif.append({'did': res['did'], 'country': res['country']})
                 all_results.append(BatchResult(did=res['did'], status=res['status'], detail=res['detail']))
@@ -487,6 +485,7 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, request_o
     if debug:
         response_payload.results = all_results
     return response_payload
+
 
 @app.post("/provision-dids-batch", response_model=DIDBatchProvisionResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, request_obj: Request):
@@ -519,26 +518,34 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
     final_results, dids_to_buy, dids_to_configure = [], [], []
     provisioned_for_notif = []
 
-    # Search Stage
-    npas_to_process, npas_for_retry = request.npas, []
-    for i in range(0, len(npas_to_process), max_concurrency):
-        batch_results = await asyncio.gather(*[_process_single_did_search(npa, subaccount_creds, api_settings) for npa in npas_to_process[i:i + max_concurrency]])
+    # --- STAGE 1: Search for DIDs (Grouped by NPA) ---
+    npa_counts = Counter(request.npas)
+    unique_npas = list(npa_counts.keys())
+    npas_for_retry = {}
+    for i in range(0, len(unique_npas), max_concurrency):
+        batch_results = await asyncio.gather(*[_process_npa_search(npa, npa_counts[npa], subaccount_creds, api_settings) for npa in unique_npas[i:i+max_concurrency]])
         for res in batch_results:
-            if res['status'] == 'found': dids_to_buy.append(res['data'])
-            elif res.get('status_code') == 429: npas_for_retry.append(res['npa'])
-            else: final_results.append(BatchProvisionResult(npa=res['npa'], status='failed', detail=res['detail']))
-        if i + max_concurrency < len(npas_to_process): await asyncio.sleep(delay_ms / 1000.0)
+            dids_to_buy.extend(res['found_dids'])
+            if res['failures'] > 0:
+                final_results.extend([BatchProvisionResult(npa=res['npa'], status='failed', detail=res['detail'])] * res['failures'])
+            if res.get('status_code') == 429:
+                npas_for_retry[res['npa']] = res['failures'] if res['failures'] > 0 else npa_counts[res['npa']]
+        if i + max_concurrency < len(unique_npas): await asyncio.sleep(delay_ms / 1000.0)
+
     if npas_for_retry:
         await asyncio.sleep(delay_ms / 1000.0)
-        for i in range(0, len(npas_for_retry), max_concurrency):
-            batch_results = await asyncio.gather(*[_process_single_did_search(npa, subaccount_creds, api_settings) for npa in npas_for_retry[i:i + max_concurrency]])
+        unique_npas_retry = list(npas_for_retry.keys())
+        for i in range(0, len(unique_npas_retry), max_concurrency):
+            batch_results = await asyncio.gather(*[_process_npa_search(npa, npas_for_retry[npa], subaccount_creds, api_settings) for npa in unique_npas_retry[i:i+max_concurrency]])
             for res in batch_results:
-                if res['status'] == 'found': dids_to_buy.append(res['data'])
-                else: final_results.append(BatchProvisionResult(npa=res['npa'], status='failed', detail=f"Failed on retry: {res['detail']}"))
-            if i + max_concurrency < len(npas_for_retry): await asyncio.sleep(delay_ms / 1000.0)
+                dids_to_buy.extend(res['found_dids'])
+                if res['failures'] > 0:
+                    final_results.extend([BatchProvisionResult(npa=res['npa'], status='failed', detail=f"Failed on retry: {res['detail']}")] * res['failures'])
+            if i + max_concurrency < len(unique_npas_retry): await asyncio.sleep(delay_ms / 1000.0)
 
-    # Buy Stage
+    # --- STAGE 2: Buy DIDs ---
     if dids_to_buy:
+        # (The buy and configure stages remain the same as they operate on a flat list of unique DIDs)
         await asyncio.sleep(delay_ms / 1000.0)
         dids_to_buy_process, dids_for_retry = dids_to_buy, []
         for i in range(0, len(dids_to_buy_process), max_concurrency):
@@ -557,7 +564,7 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
                     else: final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='failed', detail=f"Failed on retry: {res['detail']}", provisioned_did=res['data']['msisdn']))
                 if i + max_concurrency < len(dids_for_retry): await asyncio.sleep(delay_ms / 1000.0)
 
-    # Configure Stage
+    # --- STAGE 3: Configure DIDs ---
     if dids_to_configure:
         await asyncio.sleep(delay_ms / 1000.0)
         dids_to_configure_process, dids_for_retry = dids_to_configure, []
@@ -578,8 +585,8 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
                     if res['status'] == 'configured': final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='success', provisioned_did=res['data']['msisdn'], detail=f"Success on retry: {res['detail']}"))
                     else: final_results.append(BatchProvisionResult(npa=res['data']['npa'], status='partial_success', provisioned_did=res['data']['msisdn'], detail=f"Failed on retry: {res['detail']}"))
                 if i + max_concurrency < len(dids_for_retry): await asyncio.sleep(delay_ms / 1000.0)
-
-    # Finalize and respond
+    
+    # --- Finalize and Respond ---
     success_count = sum(1 for r in final_results if r.status in ['success', 'partial_success'])
     failed_count = len(request.npas) - success_count
     if provisioned_for_notif:
@@ -615,18 +622,26 @@ async def _process_single_did_release(did_item: DIDReleaseItem, subaccount_creds
     except Exception as e:
         return {'did': did_item.did, 'status': 'failed', 'detail': f"An unexpected internal error occurred: {str(e)}", 'country': country_to_use}
 
-async def _process_single_did_search(npa: str, subaccount_creds: dict, settings: dict) -> dict:
+async def _process_npa_search(npa: str, count: int, subaccount_creds: dict, settings: dict) -> dict:
     try:
         country = 'US' if npa in NPA_DATA.get('US', []) else 'CA' if npa in NPA_DATA.get('CA', []) else None
-        if not country: return {'npa': npa, 'status': 'failed', 'detail': f"NPA not found in US or CA data.", 'status_code': 400}
-        search_params = {'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': 1}
+        if not country:
+            return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': "NPA not found in US or CA data.", 'status_code': 400}
+        
+        search_params = {'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': count}
         search_result, search_status = await asyncio.to_thread(vonage_client.search_dids, subaccount_creds['api_key'], subaccount_creds['api_secret'], search_params, log_enabled=settings['log_enabled'])
+        
         if search_status >= 400 or not search_result.get('numbers'):
-            return {'npa': npa, 'status': 'failed', 'detail': f"No available numbers found. API error: {search_result.get('error', 'Unknown')}", 'status_code': search_status}
-        did_info = search_result['numbers'][0]
-        return {'npa': npa, 'status': 'found', 'data': {'npa': npa, 'msisdn': did_info.get('msisdn'), 'country': country}}
+            detail = f"No available numbers found. API error: {search_result.get('error', 'Unknown')}"
+            return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': detail, 'status_code': search_status}
+        
+        found_dids = [{'npa': npa, 'msisdn': did.get('msisdn'), 'country': country} for did in search_result['numbers']]
+        failures = count - len(found_dids)
+        detail = "Successfully found numbers." if failures == 0 else f"Found {len(found_dids)} of {count} requested numbers."
+        
+        return {'npa': npa, 'found_dids': found_dids, 'failures': failures, 'detail': detail, 'status_code': 200}
     except Exception as e:
-        return {'npa': npa, 'status': 'failed', 'detail': f"An unexpected internal error occurred during search: {str(e)}", 'status_code': 500}
+        return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': f"An unexpected internal error occurred during search: {str(e)}", 'status_code': 500}
 
 async def _process_single_did_buy(did_info: dict, subaccount_creds: dict, settings: dict) -> dict:
     msisdn, country = did_info['msisdn'], did_info['country']
@@ -653,4 +668,3 @@ async def _process_single_did_configure(did_info: dict, subaccount_creds: dict, 
         return {'status': status, 'data': did_info, 'detail': detail_message, 'config_applied': update_config, 'status_code': update_status}
     except Exception as e:
         return {'status': 'failed_config', 'data': did_info, 'detail': f"An unexpected internal error occurred during configuration: {str(e)}", 'config_applied': update_config, 'status_code': 500}
-# --- END: MODIFICATION ---
