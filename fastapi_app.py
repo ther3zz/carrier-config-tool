@@ -1,5 +1,3 @@
-# --- START OF FILE fastapi_app.py ---
-
 import os
 import asyncio
 from collections import Counter
@@ -359,7 +357,6 @@ async def update_group_defaults_endpoint(request: GroupDefaultsUpdateRequest, re
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while saving the new defaults: {e}")
     return UpdateSuccessResponse(message=f"Successfully updated stored defaults for groupid '{request.groupid}'.")
 
-# --- START: MODIFICATION ---
 @app.post("/update-dids-batch", response_model=DIDBatchUpdateResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Provisioning"])
 async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, request_obj: Request, debug: bool = False):
     logger.log_incoming_request(request_obj, request.model_dump())
@@ -415,16 +412,7 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest, request_obj
             
     if success_count > 0:
         successful_dids = [r.did for r in all_results if r.status == 'success']
-        notif_payload = {
-            "groupid": request.groupid,
-            "subaccount_name": subaccount_creds['account_name'],
-            "subaccount_api_key": subaccount_creds['api_key'],
-            "total_successful": success_count,
-            "total_failed": failed_count,
-            "updated_dids": ",".join(successful_dids),
-            "applied_voice_callback_type": request.voice_callback_type,
-            "applied_voice_callback_value": request.voice_callback_value
-        }
+        notif_payload = { "groupid": request.groupid, "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'], "total_successful": success_count, "total_failed": failed_count, "updated_dids": ",".join(successful_dids), "applied_voice_callback_type": request.voice_callback_type, "applied_voice_callback_value": request.voice_callback_value }
         notification_service.fire_and_forget("did.updated.batch", notif_payload)
 
     response_payload = DIDBatchUpdateResponse(message=final_message, total_requested=len(request.dids), success_count=success_count, failed_count=failed_count)
@@ -481,14 +469,7 @@ async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest, request_o
     failed_count = len(all_results) - success_count
     
     if successful_releases_for_notif:
-        notif_payload = {
-            "groupid": request.groupid,
-            "subaccount_name": subaccount_creds['account_name'],
-            "subaccount_api_key": subaccount_creds['api_key'],
-            "total_successful": len(successful_releases_for_notif),
-            "total_failed": failed_count,
-            "released_dids": ",".join(successful_releases_for_notif)
-        }
+        notif_payload = { "groupid": request.groupid, "subaccount_name": subaccount_creds['account_name'], "subaccount_api_key": subaccount_creds['api_key'], "total_successful": len(successful_releases_for_notif), "total_failed": failed_count, "released_dids": ",".join(successful_releases_for_notif) }
         notification_service.fire_and_forget("did.released.batch", notif_payload)
 
     response_payload = DIDBatchReleaseResponse(message="Batch release process completed.", total_requested=len(request.dids), success_count=success_count, failed_count=failed_count)
@@ -635,14 +616,22 @@ async def _process_npa_search(npa: str, count: int, subaccount_creds: dict, sett
         country = 'US' if npa in NPA_DATA.get('US', []) else 'CA' if npa in NPA_DATA.get('CA', []) else None
         if not country:
             return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': "NPA not found in US or CA data.", 'status_code': 400}
+        
         search_params = {'country': country, 'features': 'VOICE', 'pattern': f"1{npa}", 'search_pattern': 0, 'size': count}
         search_result, search_status = await asyncio.to_thread(vonage_client.search_dids, subaccount_creds['api_key'], subaccount_creds['api_secret'], search_params, log_enabled=settings['log_enabled'])
-        if search_status >= 400 or not search_result.get('numbers'):
-            detail = f"No available numbers found. API error: {search_result.get('error', 'Unknown')}"
+        
+        if search_status >= 400:
+            detail = f"API error during search: {search_result.get('error', 'Unknown')}"
             return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': detail, 'status_code': search_status}
+        
+        if not search_result.get('numbers'):
+            detail = "Search successful, but no numbers were available for this NPA."
+            return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': detail, 'status_code': search_status}
+        
         found_dids = [{'npa': npa, 'msisdn': did.get('msisdn'), 'country': country} for did in search_result['numbers']]
         failures = count - len(found_dids)
         detail = "Successfully found numbers." if failures == 0 else f"Found {len(found_dids)} of {count} requested numbers."
+        
         return {'npa': npa, 'found_dids': found_dids, 'failures': failures, 'detail': detail, 'status_code': 200}
     except Exception as e:
         return {'npa': npa, 'found_dids': [], 'failures': count, 'detail': f"An unexpected internal error occurred during search: {str(e)}", 'status_code': 500}
@@ -672,4 +661,3 @@ async def _process_single_did_configure(did_info: dict, subaccount_creds: dict, 
         return {'status': status, 'data': did_info, 'detail': detail_message, 'config_applied': update_config, 'status_code': update_status}
     except Exception as e:
         return {'status': 'failed_config', 'data': did_info, 'detail': f"An unexpected internal error occurred during configuration: {str(e)}", 'config_applied': update_config, 'status_code': 500}
-# --- END: MODIFICATION ---
