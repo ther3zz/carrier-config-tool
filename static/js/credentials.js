@@ -1,4 +1,3 @@
-// --- START OF FILE static/js/credentials.js ---
 import { apiFetch, state } from './utils.js';
 import { displayResponse, handleFetchError } from './ui.js';
 
@@ -390,17 +389,21 @@ async function handleSaveCredentialChanges(form, originalCredData) {
         return;
     }
 
-    const hasIdentifierChanged = newName !== originalCredData.name || newApiKey !== originalCredData.api_key;
-    if (hasIdentifierChanged && !newApiSecret) {
-        alert("A new API Secret is required when changing the Friendly Name or API Key.");
+
+    // Only require a new secret if the API key itself is being changed.
+    // A user might want to update the name without having the secret handy.
+    const apiKeyChanged = newApiKey !== originalCredData.api_key;
+    if (apiKeyChanged && !newApiSecret) {
+        alert("A new API Secret is required when changing the API Key.");
         return;
     }
+
 
     const payload = {
         original_name: originalCredData.name,
         name: newName,
         api_key: newApiKey,
-        api_secret: newApiSecret,
+        api_secret: newApiSecret, // This can now be empty if only the name is changing
         master_key: state.masterKey,
         voice_callback_type: newCallbackType,
         voice_callback_value: newCallbackValue
@@ -472,13 +475,14 @@ function renderCredentialList() {
  * @param {HTMLElement} container - The container element for the selector.
  */
 function populateCredentialSelector(container) {
+    const wrapper = container.querySelector('.custom-select-wrapper');
     const triggerText = container.querySelector('.custom-select-trigger span');
     const optionsContainer = container.querySelector('.custom-options');
     const filterInput = container.querySelector('.credential-filter-input');
     const valueInput = container.querySelector('.credential-selector-value');
-    if (!triggerText || !optionsContainer || !filterInput || !valueInput) return;
+    if (!wrapper || !triggerText || !optionsContainer || !filterInput || !valueInput) return;
 
-    // Clear existing options
+    // Clear existing options, but keep the filter
     optionsContainer.querySelectorAll('.custom-option:not(.filter-option)').forEach(opt => opt.remove());
     filterInput.value = '';
 
@@ -510,11 +514,20 @@ function populateCredentialSelector(container) {
 
     triggerText.textContent = defaultText;
     valueInput.value = defaultValue;
-    container.querySelector('.custom-option')?.classList.add('selected');
+    
+    // Reset selection and close dropdown
+    wrapper.classList.remove('open');
+    optionsContainer.querySelectorAll('.custom-option.selected').forEach(opt => opt.classList.remove('selected'));
+    optionsContainer.querySelector('.custom-option')?.classList.add('selected');
 
+    // Show/hide filter based on number of options
     const filterOption = container.querySelector('.filter-option');
     filterOption.style.display = state.storedCredentials.length > 5 ? 'block' : 'none';
+    
+    // Ensure all options are visible initially
+    optionsContainer.querySelectorAll('.custom-option').forEach(opt => opt.style.display = 'block');
 }
+
 
 /**
  * Populates all credential selector dropdowns on the page.
@@ -522,6 +535,71 @@ function populateCredentialSelector(container) {
 export function populateAllCredentialSelectors() {
     document.querySelectorAll('.credential-selector-container').forEach(populateCredentialSelector);
 }
+
+/**
+ * NEW: Sets up global event listeners for all custom credential selectors.
+ * This function should be called once when the application initializes.
+ */
+export function setupCredentialSelectorEventListeners() {
+    document.body.addEventListener('click', e => {
+        const trigger = e.target.closest('.custom-select-trigger');
+        const wrapper = e.target.closest('.custom-select-wrapper');
+
+        // Close all other dropdowns
+        document.querySelectorAll('.custom-select-wrapper.open').forEach(openWrapper => {
+            if (openWrapper !== wrapper) {
+                openWrapper.classList.remove('open');
+            }
+        });
+
+        // If a trigger was clicked, toggle its dropdown
+        if (trigger) {
+            trigger.parentElement.classList.toggle('open');
+        } 
+        // If an option was clicked, handle the selection
+        else if (e.target.classList.contains('custom-option') && !e.target.classList.contains('filter-option')) {
+            const option = e.target;
+            const parentWrapper = option.closest('.custom-select-wrapper');
+            const container = parentWrapper.closest('.credential-selector-container');
+            
+            const value = option.dataset.value;
+            const text = option.textContent;
+
+            // Update UI
+            container.querySelector('.custom-select-trigger span').textContent = text;
+            parentWrapper.querySelectorAll('.custom-option.selected').forEach(opt => opt.classList.remove('selected'));
+            option.classList.add('selected');
+            
+            // Update hidden input value
+            container.querySelector('.credential-selector-value').value = value;
+
+            // Show/hide manual entry fields
+            const manualEntryDiv = container.querySelector('.credential-manual-entry');
+            if (manualEntryDiv) {
+                manualEntryDiv.style.display = (value === 'manual') ? 'block' : 'none';
+            }
+
+            // Close the dropdown
+            parentWrapper.classList.remove('open');
+        }
+        // If the click was outside any wrapper, all dropdowns are already closed.
+    });
+
+    // Event listener for the filter input
+    document.body.addEventListener('keyup', e => {
+        if (e.target.classList.contains('credential-filter-input')) {
+            const input = e.target;
+            const filter = input.value.toLowerCase();
+            const optionsContainer = input.closest('.custom-options');
+            
+            optionsContainer.querySelectorAll('.custom-option:not(.filter-option)').forEach(option => {
+                const text = option.textContent.toLowerCase();
+                option.style.display = text.includes(filter) ? 'block' : 'none';
+            });
+        }
+    });
+}
+
 
 /**
  * Gets the authentication payload (either from stored creds or manual entry).
@@ -555,4 +633,3 @@ export function getAuthPayload(idPrefix) {
         throw new Error('Please select a credential or choose "Manual Entry".');
     }
 }
-// --- END OF FILE static/js/credentials.js ---
