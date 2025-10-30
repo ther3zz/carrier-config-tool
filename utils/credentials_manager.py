@@ -1,5 +1,3 @@
-# --- START OF FILE utils/credentials_manager.py ---
-
 import os
 import json
 from threading import Lock
@@ -68,36 +66,73 @@ def get_credential_names():
     return sorted(list(creds.keys()))
 
 
+
 def save_credential(name: str, api_key: str, api_secret: str, master_key: str,
                     voice_callback_type: str = '', voice_callback_value: str = '',
                     original_name: str = None):
-    # (Function unchanged)
+    """
+    Saves a new credential or updates an existing one.
+    - If api_secret is provided, it will be encrypted and saved.
+    - If api_secret is NOT provided, this must be an update to an existing credential.
+    - If the api_key is changed during an update, a new api_secret is required.
+    - If only the name or other metadata is changed, the existing secret is preserved.
+    """
     if not all([name, api_key, master_key]):
         raise ValueError("Name, API Key, and Master Key are all required.")
+    
+    # If original_name isn't provided, it's a new credential or the name isn't changing.
     if not original_name:
         original_name = name
+
     all_creds = get_all_credentials()
     existing_cred = all_creds.get(original_name)
+    
     encrypted_secret = None
+
+    # Scenario 1: A new secret is explicitly provided. Use it.
+    # This covers creating new credentials and explicitly updating an existing secret.
     if api_secret:
         encrypted_secret = encrypt_data(api_secret, master_key)
+    
+    # Scenario 2: No new secret is provided. This must be an update to an existing credential.
     elif existing_cred:
-        if name != original_name or api_key != existing_cred.get('api_key'):
-            raise ValueError("A new API Secret is required when changing the Friendly Name or API Key.")
+        # If the API key is also being changed, a new secret is mandatory for security.
+        if api_key != existing_cred.get('api_key'):
+            raise ValueError("A new API Secret is required when changing the API Key.")
+        # Otherwise, reuse the existing encrypted secret.
         encrypted_secret = existing_cred.get('encrypted_secret')
+
+    # If, after the logic above, we still have no secret, it means a new credential
+    # was being created without a secret, which is not allowed.
     if not encrypted_secret:
         raise ValueError("An API Secret is required to save a new credential.")
+        
     api_key_hint = f"{api_key[:5]}...{api_key[-4:]}" if len(api_key) > 8 else api_key
+    
+    # Save to the configured storage (DB or file)
     if STORAGE_MODE == 'db':
-        db_manager.db_save_credential(name, api_key, encrypted_secret, api_key_hint, voice_callback_type, voice_callback_value)
+        db_manager.db_save_credential(
+            name, api_key, encrypted_secret, api_key_hint, 
+            voice_callback_type, voice_callback_value
+        )
+        # If the name (primary key) was changed, delete the old record.
         if name != original_name:
             db_manager.db_delete_credential(original_name)
-    else:
-        new_entry = { 'api_key': api_key, 'encrypted_secret': encrypted_secret, 'api_key_hint': api_key_hint, 'default_voice_callback_type': voice_callback_type or '', 'default_voice_callback_value': voice_callback_value or '' }
+    else: # File mode
+        new_entry = {
+            'api_key': api_key,
+            'encrypted_secret': encrypted_secret,
+            'api_key_hint': api_key_hint,
+            'default_voice_callback_type': voice_callback_type or '',
+            'default_voice_callback_value': voice_callback_value or ''
+        }
+        # If the name (dict key) was changed, delete the old entry.
         if name != original_name and original_name in all_creds:
             del all_creds[original_name]
+        
         all_creds[name] = new_entry
         _file_save_all_credentials(all_creds)
+
 
 
 def delete_credential(name: str) -> bool:
@@ -157,7 +192,7 @@ def find_and_decrypt_credential_by_groupid(groupid: str, master_key: str) -> dic
         raise ValueError(f"Decryption failed for groupid '{groupid}'. The master key may be incorrect.")
     return { 'api_key': credential_data.get('api_key'), 'api_secret': decrypted_secret, 'account_name': credential_data.get('name'), 'default_voice_callback_type': credential_data.get('default_voice_callback_type'), 'default_voice_callback_value': credential_data.get('default_voice_callback_value') }
 
-# --- START: MODIFICATION (Revert rekey function to its simple form) ---
+
 def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
     """
     Iterates through all credentials, decrypts them with the old key,
@@ -210,6 +245,4 @@ def rekey_all_credentials(old_master_key: str, new_master_key: str) -> dict:
         _file_save_all_credentials(updated_creds)
         
     return results
-# --- END: MODIFICATION ---
 
-# --- END OF FILE utils/credentials_manager.py ---
