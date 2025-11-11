@@ -1,4 +1,3 @@
-# --- START OF FILE vendors/vonage/client.py ---
 import requests
 import json
 import traceback
@@ -9,7 +8,7 @@ from utils.logger import log_request_response
 NEXMO_PSIP_API_URL = 'https://api.nexmo.com/v1/psip/'
 NEXMO_SEARCH_API_URL = 'https://rest.nexmo.com/number/search'
 NEXMO_BUY_API_URL = 'https://rest.nexmo.com/number/buy'
-NEXMO_CANCEL_API_URL = 'https://rest.nexmo.com/number/cancel' # New endpoint
+NEXMO_CANCEL_API_URL = 'https://rest.nexmo.com/number/cancel'
 NEXMO_UPDATE_API_URL = 'https://rest.nexmo.com/number/update'
 NEXMO_OWNED_API_URL = 'https://rest.nexmo.com/account/numbers'
 VONAGE_ACCOUNTS_API_URL = 'https://api.nexmo.com/accounts'
@@ -57,7 +56,7 @@ def _handle_vonage_error(e, operation_name="Request"):
         return {"error": "An critical internal error occurred during error handling."}, 500
 
 
-# ... (create_psip, get_psip_domains, etc. are unchanged) ...
+# ... create_psip, get_psip_domains, etc. ...
 def create_psip(username, password, payload, log_enabled=False):
     operation_name = "Vonage PSIP Create"
     request_details = {"URL": NEXMO_PSIP_API_URL, "Method": "POST", "Auth": (username, password), "Payload": payload}
@@ -90,7 +89,7 @@ def get_psip_domains(username, password, log_enabled=False):
         if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
     return response_data, status_code
 
-# --- START: MODIFICATION ---
+
 def update_psip_domain(username, password, domain_name, payload, log_enabled=False):
     operation_name = f"Vonage PSIP Update Domain ({domain_name})"
     url = f"{NEXMO_PSIP_API_URL.rstrip('/')}/{domain_name}"
@@ -126,26 +125,93 @@ def delete_psip_domain(username, password, domain_name, log_enabled=False):
     finally:
         if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
     return response_data, status_code
-# --- END: MODIFICATION ---
+
 
 def search_dids(username, password, search_params, log_enabled=False):
     operation_name = "Vonage DID Search"
-    request_details = {"URL": NEXMO_SEARCH_API_URL, "Method": "GET", "Auth": (username, password), "Params": search_params}
-    response_data, status_code = None, None
-    try:
-        response = requests.get(NEXMO_SEARCH_API_URL, auth=(username, password), params=search_params, headers={'Accept': 'application/json'}, timeout=20)
-        response.raise_for_status()
-        try: response_data = response.json()
-        except json.JSONDecodeError: response_data = {"error": f"Search failed (non-JSON response, status {response.status_code})"}
-        status_code = response.status_code
-    except requests.exceptions.RequestException as e: response_data, status_code = _handle_vonage_error(e, "Search DID")
-    except Exception as e: response_data, status_code = _handle_vonage_error(e, "Search DID")
-    finally:
-        if isinstance(response_data, dict):
-            if 'numbers' not in response_data: response_data['numbers'] = []
-            if 'count' not in response_data: response_data['count'] = len(response_data['numbers'])
-        if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
-    return response_data, status_code
+    local_params = search_params.copy()
+    requested_size = local_params.get('size', 10)
+
+    # Path for a single request if pagination is not needed
+    if requested_size <= 100:
+        request_details = {"URL": NEXMO_SEARCH_API_URL, "Method": "GET", "Auth": (username, password), "Params": local_params}
+        response_data, status_code = None, None
+        try:
+            response = requests.get(NEXMO_SEARCH_API_URL, auth=(username, password), params=local_params, headers={'Accept': 'application/json'}, timeout=20)
+            response.raise_for_status()
+            try:
+                response_data = response.json()
+            except json.JSONDecodeError:
+                response_data = {"error": f"Search failed (non-JSON response, status {response.status_code})"}
+            status_code = response.status_code
+        except requests.exceptions.RequestException as e:
+            response_data, status_code = _handle_vonage_error(e, "Search DID")
+        except Exception as e:
+            response_data, status_code = _handle_vonage_error(e, "Search DID")
+        finally:
+            if isinstance(response_data, dict):
+                response_data.setdefault('numbers', [])
+                response_data.setdefault('count', len(response_data['numbers']))
+            if log_enabled:
+                log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
+        return response_data, status_code
+    
+    # Path for multiple requests if pagination is needed
+    else:
+        all_numbers = []
+        page_index = 1
+        
+        while len(all_numbers) < requested_size:
+            params_for_page = local_params.copy()
+            params_for_page['size'] = 100
+            params_for_page['index'] = page_index
+            
+            page_operation_name = f"{operation_name} (Page {page_index})"
+            request_details = {"URL": NEXMO_SEARCH_API_URL, "Method": "GET", "Auth": (username, password), "Params": params_for_page}
+            response_data, status_code = None, None
+
+            try:
+                response = requests.get(NEXMO_SEARCH_API_URL, auth=(username, password), params=params_for_page, headers={'Accept': 'application/json'}, timeout=20)
+                response.raise_for_status()
+                try:
+                    response_data = response.json()
+                except json.JSONDecodeError:
+                    response_data = {"error": f"Search failed on page {page_index} (non-JSON response, status {response.status_code})"}
+                status_code = response.status_code
+
+            except requests.exceptions.RequestException as e:
+                response_data, status_code = _handle_vonage_error(e, page_operation_name)
+                # On failure, log and return the error immediately
+                if log_enabled:
+                    log_request_response(page_operation_name, request_details, response_data, status_code, account_id=username)
+                return response_data, status_code
+            except Exception as e:
+                response_data, status_code = _handle_vonage_error(e, page_operation_name)
+                if log_enabled:
+                    log_request_response(page_operation_name, request_details, response_data, status_code, account_id=username)
+                return response_data, status_code
+            finally:
+                if log_enabled:
+                    log_request_response(page_operation_name, request_details, response_data, status_code, account_id=username)
+            
+            page_numbers = response_data.get('numbers', [])
+            if not page_numbers:
+                break  # No more numbers are available from the API for this search criteria.
+                
+            all_numbers.extend(page_numbers)
+            page_index += 1
+        
+        # Truncate the collected numbers to the exact size requested by the user
+        final_numbers = all_numbers[:requested_size]
+        
+        # Assemble the final aggregated response object
+        final_response = {
+            'count': len(final_numbers),
+            'numbers': final_numbers,
+            'message': f"Aggregated results from {page_index - 1} page(s)."
+        }
+        
+        return final_response, 200
 
 def _verify_did_ownership(username, password, msisdn, log_enabled=False):
     operation_name = f"Vonage DID Ownership Verification ({msisdn})"
@@ -283,7 +349,7 @@ def update_did(username, password, country, msisdn, config, log_enabled=False, t
     return response_data, status_code
 
 
-# --- Subaccount Management Client Functions (Unchanged) ---
+# --- Subaccount Management Client Functions ---
 def list_subaccounts(primary_api_key, primary_api_secret, log_enabled=False):
     operation_name = f"Vonage List Subaccounts ({primary_api_key})"
     url = f"{VONAGE_ACCOUNTS_API_URL}/{primary_api_key}/subaccounts"
@@ -331,4 +397,3 @@ def update_subaccount(primary_api_key, primary_api_secret, subaccount_key, paylo
     finally:
         if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=primary_api_key)
     return response_data, status_code
-# --- END OF FILE vendors/vonage/client.py ---
