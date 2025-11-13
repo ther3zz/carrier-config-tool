@@ -1,5 +1,3 @@
-# --- START OF FILE utils/notification_service.py ---
-
 import asyncio
 import httpx
 import hmac
@@ -9,7 +7,7 @@ import threading
 from datetime import datetime, timezone
 
 from . import settings_manager
-from . import logger # Import the logger module
+from . import logger
 
 async def send_notification(event_type: str, data: dict):
     """
@@ -22,7 +20,6 @@ async def send_notification(event_type: str, data: dict):
     if not settings_manager.get_setting('notifications_enabled'):
         return
 
-    # --- START: MODIFICATION ---
     event_setting_map = {
         "subaccount.created": "notifications_on_subaccount_created",
         "did.provisioned": "notifications_on_did_provisioned",
@@ -33,7 +30,6 @@ async def send_notification(event_type: str, data: dict):
         "did.released.batch": "notifications_on_did_released",
         "did.updated.batch": "notifications_on_did_provisioned" # Re-use provisioning setting for updates
     }
-    # --- END: MODIFICATION ---
     
     event_key = event_setting_map.get(event_type)
     
@@ -110,14 +106,26 @@ async def send_notification(event_type: str, data: dict):
             notification_logger.info(json.dumps(log_entry))
             print(f"Notification Sent: Event '{event_type}' to {webhook_url} as {content_type}. Status: {response.status_code}")
 
+    
+    except httpx.HTTPStatusError as e:
+        # This catches 4xx and 5xx response errors specifically
+        error_details = {
+            "error": "HTTPStatusError",
+            "status_code": e.response.status_code,
+            "response_body": e.response.text
+        }
+        log_entry["response"].update(error_details)
+        notification_logger.error(json.dumps(log_entry))
+        print(f"Notification HTTP Error: Event '{event_type}' to {webhook_url} failed with status {e.response.status_code}. Response Body: {e.response.text}")
+    
     except httpx.RequestError as e:
         log_entry["response"] = {"error": f"RequestError: {str(e)}"}
         notification_logger.error(json.dumps(log_entry))
-        print(f"Notification Error: Failed to send event '{event_type}' to {webhook_url}. Details: {e}")
+        print(f"Notification Request Error: Failed to send event '{event_type}' to {webhook_url}. Details: {e}")
     except Exception as e:
         log_entry["response"] = {"error": f"UnexpectedError: {str(e)}"}
         notification_logger.error(json.dumps(log_entry))
-        print(f"Notification Error: An unexpected error occurred while sending webhook. Details: {e}")
+        print(f"Notification Unexpected Error: An unexpected error occurred while sending event '{event_type}'. Details: {e}")
 
 
 def _run_async_in_thread(coro):
@@ -132,5 +140,3 @@ def fire_and_forget(event_type: str, data: dict):
     thread = threading.Thread(target=_run_async_in_thread, args=(coroutine,))
     thread.daemon = True
     thread.start()
-
-# --- END OF FILE utils/notification_service.py ---
