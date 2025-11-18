@@ -1,0 +1,66 @@
+<!-- START OF FILE templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vendor API Configuration Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="header-container">
+        <h1>Vendor API Configuration Tool</h1>
+        <div class="settings-icon" id="settingsGearIcon" title="API Request Settings">⚙</div>
+    </div>
+
+    <!-- The Settings Modal is now included from a partial file -->
+    {% include 'partials/_settings_modal.html' %}
+
+    <!-- Vendor Tabs -->
+    <div class="tabs">
+        <div class="tab-link active" onclick="openOuterTab(event, 'Vonage')">Vonage</div>
+        <div class="tab-link" onclick="openOuterTab(event, 'VendorB')">Vendor B</div>
+    </div>
+
+    <!-- Vonage Tab Content -->
+    <div id="Vonage" class="tab-content active">
+        <div class="accordion">
+            <!-- Each accordion is now included from its own partial file -->
+            {% include 'partials/_vonage_credential_management.html' %}
+            {% include 'partials/_vonage_subaccount_management.html' %}
+            {% include 'partials/_vonage_psip.html' %}
+            {% include 'partials/_vonage_dids.html' %}
+            {% include 'partials/_vonage_modify_dids.html' %}
+            {% include 'partials/_vonage_release_dids.html' %}
+        </div>
+    </div>
+
+    <!-- Vendor B Tab Content -->
+    <div id="VendorB" class="tab-content">
+        <p>Configuration for Vendor B will go here.</p>
+    </div>
+
+    <!-- Response Area (Shared) -->
+    <div id="response"></div>
+
+    <!-- Modal for Country Codes -->
+    <div id="countryCodesModal" class="settings-modal">
+        <div class="settings-modal-content" style="max-width: 500px;">
+            <div class="settings-modal-header">
+                <h2>Country Dialing Codes</h2>
+                <span class="settings-modal-close" id="countryCodesModalClose">×</span>
+            </div>
+            <div class="settings-modal-body">
+                <input type="text" id="countryCodeSearch" placeholder="Search for a country or code..." style="width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box;">
+                <div id="countryCodesList" style="max-height: 400px; overflow-y: auto;"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- HTML Templates are now included from a partial file -->
+    {% include 'partials/_templates.html' %}
+
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
+<!-- END OF FILE templates/index.html -->
