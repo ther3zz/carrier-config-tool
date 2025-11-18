@@ -212,6 +212,7 @@ The main endpoints include:
 -   **Master Key**: The Master Key is the primary secret for data access. It is required in the browser session for manual management and as an environment variable for the automated API.
 -   **API Key Protection**: The FastAPI is protected from unauthorized access via a mandatory API key.
 -   **IP Whitelisting**: An additional layer of security can be enabled to restrict API access to known IP addresses.
+-   Note: AVOID EXPOSING THE FLASKUI INSTANCE TO THE INTERNET.
 
 ## Logging
 
