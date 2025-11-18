@@ -1,0 +1,59 @@
+<details id="vonagePsipAccordion">
+    <summary>Configure SIP Trunk (PSIP)</summary>
+    <div class="action-content has-inner-tabs">
+        <div class="inner-tabs">
+            <div class="inner-tab-link active" onclick="openInnerTab(event, 'create-psip', this)">Create Domain</div>
+            <div class="inner-tab-link" onclick="openInnerTab(event, 'manage-psip', this)">Manage Domains</div>
+        </div>
+        <div id="create-psip" class="inner-tab-content active">
+            <div style="padding: 0 20px 20px 20px;">
+                <h3>Vonage SIP Trunk Configuration</h3>
+                <form id="vonagePsipForm">
+                    <div class="credential-selector-container" data-id-prefix="vonage_psip"></div>
+                    <div class="form-group"> <label for="vonage_psip_name">Name:</label> <input type="text" id="vonage_psip_name" placeholder="e.g., my-sip-domain-01" required> </div>
+                    <div class="form-group"> <label for="vonage_psip_trunk_name">Trunk Name:</label> <input type="text" id="vonage_psip_trunk_name" placeholder="e.g., my-sip-trunk-01" required> </div>
+                    <div class="form-group"> <label for="vonage_psip_tls">TLS:</label> <select id="vonage_psip_tls" required> <option value="optional">Optional</option> <option value="required">Required</option> <option value="disabled">Disabled</option> </select> </div>
+                    <div class="form-group"> <label for="vonage_psip_digest_auth">Digest Authentication:</label> <div class="toggle-container"> <label class="toggle"> <input type="checkbox" id="vonage_psip_digest_auth"> <span class="slider"></span> </label> <span id="vonage_psip_digest_auth_status">Off</span> </div> </div>
+                    <div class="form-group"> <label for="vonage_psip_srtp">SRTP:</label> <select id="vonage_psip_srtp" required> <option value="optional">Optional</option> <option value="required">Required</option> <option value="disabled">Disabled</option> </select> </div>
+                    <div class="form-group"> <label for="vonage_psip_acl">ACL (One IP per line, /32 appended if missing):</label> <textarea id="vonage_psip_acl" placeholder="1.1.1.1/32&#10;2.2.2.2/32"></textarea> </div>
+                    <div class="form-group">
+                        <details id="vonage_psip_storedIpsDetails">
+                            <summary style="cursor: pointer; font-weight: bold; margin-bottom: 10px;">Manage Stored IP Addresses (Session Only)</summary>
+                            <div style="padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px;">
+                                <div class="toggle-container" style="margin-bottom: 15px;"> <label class="toggle"> <input type="checkbox" id="vonage_psip_include_stored_ips" checked> <span class="slider"></span> </label> <span>Include stored IPs in ACL</span> </div>
+                                <div id="vonage_psip_storedIpsList" style="margin-bottom: 15px;">
+                                    <div style="font-weight: bold; margin-bottom: 5px;">Loaded IP Addresses from Config:</div>
+                                    <div id="vonage_psip_noStoredItems" style="font-style: italic; color: #777;">Loading...</div>
+                                    <div id="vonage_psip_storedItemsContainer"></div>
+                                </div>
+                                <p style="font-size: 0.9em; color: #666;"><i>Note: Adding/deleting below only affects this browser session.</i></p>
+                                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                                    <div style="flex: 2;"><input type="text" id="vonage_psip_newItemValue" placeholder="IP Address (e.g. 192.168.1.1/32)"></div>
+                                    <div style="flex: 2;"><input type="text" id="vonage_psip_newItemLabel" placeholder="Label (e.g. Office Network)"></div>
+                                    <div><button type="button" id="vonage_psip_addStoredItem" class="add-stored-item-btn" data-type="ip" style="padding: 8px 10px;">Add IP</button></div>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                    <div class="form-group"> <label for="vonage_psip_domain_type">Domain Type:</label> <input type="text" id="vonage_psip_domain_type" value="trunk" required> </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;"> <button type="button" id="vonage_psip_previewButton" class="preview-button">Preview Payload</button> <button type="button" id="vonage_psip_copyButton" class="copy-button">Copy cURL Command</button> <button type="submit">Send API Request</button> </div>
+                </form>
+            </div>
+        </div>
+        <div id="manage-psip" class="inner-tab-content">
+            <div style="padding: 0 20px 20px 20px;">
+                <h3>Manage Existing PSIP Domains</h3>
+                <form id="vonageFetchPsipDomainsForm">
+                    <p>Select credentials to fetch all PSIP domains on the account. These credentials will be reused for any update/delete actions.</p>
+                    <div class="credential-selector-container" data-id-prefix="vonage_manage_psip"></div>
+                    <button type="submit">Fetch Domains</button>
+                </form>
+                <hr style="margin: 30px 0;">
+                <div id="vonage-psip-domain-list-container" style="display: none;">
+                    <h4>Found Domains:</h4>
+                    <div id="vonage-psip-domain-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</details>
