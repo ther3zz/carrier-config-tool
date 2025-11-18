@@ -20,7 +20,7 @@
 
 ## Overview
 
-This project provides a robust platform for managing telecommunication services, specifically focusing on provisioning and configuring Direct Inward Dialing (DID) numbers through the Vonage API. It is composed of two primary components:
+This project provides a robust platform for managing telecommunication services, specifically focusing on provisioning and configuring Direct Inward Dialing (DID) numbers through the Vonage API (more providers are planned). It is composed of two primary components:
 
 1.  **A Flask-based Web Interface**: A comprehensive user interface for manual, detailed management of credentials, Vonage subaccounts, DIDs, and SIP trunks.
 2.  **A FastAPI-based REST API**: A secure, high-performance API designed for automated, programmatic provisioning and management of DIDs.
