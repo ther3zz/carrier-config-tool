@@ -3,6 +3,7 @@ from utils import credentials_manager
 from utils import settings_manager
 from utils.password_generator import generate_secure_secret
 from utils import notification_service
+from utils import logger
 from . import client as vonage_client
 
 # Create a Blueprint for all Vonage-related API routes that the UI will call
@@ -176,9 +177,9 @@ def create_psip_domain():
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
-
+        
         payload = _get_psip_form_payload(data)
-
+        
 
         result, status_code = vonage_client.create_psip(
             username=creds['api_key'],
@@ -383,12 +384,22 @@ def _check_ownership_single(number, creds, log_enabled):
     Returns the result dict.
     """
     # Using the verify_did_ownership function from the client
-    is_owned, _ = vonage_client._verify_did_ownership(
+    is_owned, response_data = vonage_client._verify_did_ownership(
         username=creds['api_key'], 
         password=creds['api_secret'], 
         msisdn=number, 
         log_enabled=log_enabled
     )
+    
+    # Log the check if enabled
+    if log_enabled:
+        logger.log_request_response(
+            operation_name=f"CheckOwnership[{number}]",
+            request_details={"msisdn": number},
+            response_data=response_data,
+            status_code=200 if is_owned else 404,
+            account_id=creds.get('account_name')
+        )
     
     if is_owned:
         return {
@@ -402,7 +413,16 @@ def _check_ownership_single(number, creds, log_enabled):
 @vonage_bp.route('/dids/search_ownership', methods=['POST'])
 def search_did_ownership_batch():
     data = request.get_json()
+    # Log incoming system request
+    # Since this is Flask, we need to construct a pseudo-request object or just pass data if logger supports it, 
+    # but logger.log_incoming_request expects a FastAPI Request object. 
+    # We will log manually to system logger for Flask.
     try:
+        if settings_manager.get_setting('store_logs_enabled'):
+             import logging
+             system_logger = logging.getLogger()
+             system_logger.info(f"Incoming Flask Request: POST /api/vonage/dids/search_ownership - Payload keys: {list(data.keys())}")
+
         # We need a master key to decrypt ALL credentials
         master_key = data.get('master_key')
         if not master_key:
@@ -437,20 +457,7 @@ def search_did_ownership_batch():
              return jsonify({"error": "No credentials could be decrypted. Check Master Key or store credentials first."}), 400
 
         # 3. Perform Search
-        # Strategy: For each number, checking every subaccount is O(N*M).
-        # We can parallelize the outer loop (numbers) or inner loop (accounts).
-        # Since we want to find WHICH account owns it, we must query `GET /account/numbers?pattern=...`
-        # If we have many subaccounts, checking one number against all is better done by 
-        # checking the number against each account.
-        
         results = []
-        
-        # We will use a ThreadPoolExecutor. 
-        # Total tasks = numbers * subaccounts. This can be large.
-        # However, `verify_did_ownership` is a network call.
-        # Let's parallelize the 'check a number against all accounts' logic.
-        
-        # Optimization: We can just perform 1 search per number per account.
         
         max_threads = 10 # Control concurrency
         
@@ -481,8 +488,6 @@ def search_did_ownership_batch():
                     found_data = future.result()
                     if found_data:
                         # Update the result at idx
-                        # Note: If a number is found in multiple accounts (unlikely for DIDs but possible theoretically), 
-                        # the last one to finish wins. Typically it should be unique.
                         results[idx] = found_data
                 except Exception as e:
                     print(f"Error checking ownership: {e}")
