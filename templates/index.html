@@ -1,12 +1,13 @@
-<!-- START OF FILE templates/index.html -->
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vendor API Configuration Tool</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body>
     <div class="header-container">
         <h1>Vendor API Configuration Tool</h1>
@@ -32,6 +33,7 @@
             {% include 'partials/_vonage_dids.html' %}
             {% include 'partials/_vonage_modify_dids.html' %}
             {% include 'partials/_vonage_release_dids.html' %}
+            {% include 'partials/_vonage_search_subaccounts.html' %}
         </div>
     </div>
 
@@ -51,16 +53,17 @@
                 <span class="settings-modal-close" id="countryCodesModalClose">×</span>
             </div>
             <div class="settings-modal-body">
-                <input type="text" id="countryCodeSearch" placeholder="Search for a country or code..." style="width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box;">
+                <input type="text" id="countryCodeSearch" placeholder="Search for a country or code..."
+                    style="width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box;">
                 <div id="countryCodesList" style="max-height: 400px; overflow-y: auto;"></div>
             </div>
         </div>
     </div>
-    
+
     <!-- HTML Templates are now included from a partial file -->
     {% include 'partials/_templates.html' %}
 
     <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
+
 </html>
-<!-- END OF FILE templates/index.html -->
