@@ -1,5 +1,3 @@
-# --- START OF FILE vendors/vonage/routes.py ---
-
 from flask import Blueprint, request, jsonify
 from utils import credentials_manager
 from utils import settings_manager
@@ -158,7 +156,6 @@ def update_subaccount():
 
 
 # --- PSIP Trunking Endpoints ---
-# --- START: MODIFICATION ---
 def _get_psip_form_payload(data: dict) -> dict:
     """Helper to extract PSIP domain payload from a request."""
     return {
@@ -170,7 +167,7 @@ def _get_psip_form_payload(data: dict) -> dict:
         'acl': data.get('acl', []),
         'domain_type': data.get('domain_type')
     }
-# --- END: MODIFICATION ---
+
 
 @vonage_bp.route('/psip/create', methods=['POST'])
 def create_psip_domain():
@@ -179,9 +176,9 @@ def create_psip_domain():
         creds = _get_credentials_from_request(data)
         log_enabled = settings_manager.get_setting('store_logs_enabled')
         
-        # --- START: MODIFICATION ---
+
         payload = _get_psip_form_payload(data)
-        # --- END: MODIFICATION ---
+
 
         result, status_code = vonage_client.create_psip(
             username=creds['api_key'],
@@ -217,7 +214,7 @@ def get_psip_domains():
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
-# --- START: MODIFICATION ---
+
 @vonage_bp.route('/psip/update', methods=['POST'])
 def update_psip_domain():
     data = request.get_json()
@@ -269,7 +266,7 @@ def delete_psip_domain():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"An unexpected server error occurred: {str(e)}"}), 500
-# --- END: MODIFICATION ---
+
 
 
 # --- DID Management Endpoints ---
@@ -377,4 +374,120 @@ def release_did():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
-# --- END OF FILE vendors/vonage/routes.py ---
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def _check_ownership_single(number, creds, log_enabled):
+    """
+    Checks if a single number exists in a subaccount.
+    Returns the result dict.
+    """
+    # Using the verify_did_ownership function from the client
+    is_owned, _ = vonage_client._verify_did_ownership(
+        username=creds['api_key'], 
+        password=creds['api_secret'], 
+        msisdn=number, 
+        log_enabled=log_enabled
+    )
+    
+    if is_owned:
+        return {
+            'number': number,
+            'status': 'found',
+            'subaccount': creds.get('api_key'),
+            'friendly_name': creds.get('account_name')
+        }
+    return None
+
+@vonage_bp.route('/dids/search_ownership', methods=['POST'])
+def search_did_ownership_batch():
+    data = request.get_json()
+    try:
+        # We need a master key to decrypt ALL credentials
+        master_key = data.get('master_key')
+        if not master_key:
+             return jsonify({"error": "Master Key is required to search across all subaccounts."}), 400
+             
+        numbers = data.get('numbers', [])
+        if not numbers:
+             return jsonify({"error": "No numbers provided."}), 400
+             
+        log_enabled = settings_manager.get_setting('store_logs_enabled')
+        
+        # 1. Get ALL credentials
+        all_creds_dict = credentials_manager.get_all_credentials()
+        
+        # 2. Decrypt them all
+        decrypted_creds_list = []
+        for name, cred_data in all_creds_dict.items():
+            try:
+                # We need to manually decrypt since get_all_credentials returns encrypted secrets
+                from utils import encryption # Lazy import to avoid circular dependency if any
+                decrypted_secret = encryption.decrypt_data(cred_data['encrypted_secret'], master_key)
+                decrypted_creds_list.append({
+                    'account_name': name,
+                    'api_key': cred_data['api_key'],
+                    'api_secret': decrypted_secret
+                })
+            except Exception:
+                # If decryption fails (e.g. wrong key, though unlikely if key worked for others), skip
+                continue
+        
+        if not decrypted_creds_list:
+             return jsonify({"error": "No credentials could be decrypted. Check Master Key or store credentials first."}), 400
+
+        # 3. Perform Search
+        # Strategy: For each number, checking every subaccount is O(N*M).
+        # We can parallelize the outer loop (numbers) or inner loop (accounts).
+        # Since we want to find WHICH account owns it, we must query `GET /account/numbers?pattern=...`
+        # If we have many subaccounts, checking one number against all is better done by 
+        # checking the number against each account.
+        
+        results = []
+        
+        # We will use a ThreadPoolExecutor. 
+        # Total tasks = numbers * subaccounts. This can be large.
+        # However, `verify_did_ownership` is a network call.
+        # Let's parallelize the 'check a number against all accounts' logic.
+        
+        # Optimization: We can just perform 1 search per number per account.
+        
+        max_threads = 10 # Control concurrency
+        
+        with ThreadPoolExecutor(max_workers=max_threads) as executor:
+            future_to_search = {}
+            
+            for number in numbers:
+                # Sanitize
+                clean_number = "".join(filter(str.isdigit, number))
+                if not clean_number: continue
+                
+                # Start with 'not_found'
+                results.append({
+                    'number': clean_number, 
+                    'status': 'not_found', 
+                    'subaccount': None, 
+                    'friendly_name': None
+                })
+                current_result_idx = len(results) - 1
+                
+                for creds in decrypted_creds_list:
+                    future = executor.submit(_check_ownership_single, clean_number, creds, log_enabled)
+                    future_to_search[future] = current_result_idx
+
+            for future in as_completed(future_to_search):
+                idx = future_to_search[future]
+                try:
+                    found_data = future.result()
+                    if found_data:
+                        # Update the result at idx
+                        # Note: If a number is found in multiple accounts (unlikely for DIDs but possible theoretically), 
+                        # the last one to finish wins. Typically it should be unique.
+                        results[idx] = found_data
+                except Exception as e:
+                    print(f"Error checking ownership: {e}")
+                    
+        return jsonify({'results': results}), 200
+
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
