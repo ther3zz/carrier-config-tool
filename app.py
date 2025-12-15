@@ -1,11 +1,12 @@
-# --- START OF FILE app.py ---
-
 import os
 import io
 import zipfile
 import json 
 from datetime import datetime
 from flask import Flask, render_template, jsonify, send_file, request
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Import utility functions and blueprints
 from utils.config_loader import load_config_file
@@ -14,9 +15,8 @@ from utils import credentials_manager
 from utils import encryption
 from utils import settings_manager
 from vendors.vonage.routes import vonage_bp
-# --- START: MODIFICATION ---
 from routes.notifications import notifications_bp
-# --- END: MODIFICATION ---
+
 
 app = Flask(__name__)
 
@@ -27,9 +27,9 @@ NPA_DATA_CONFIG_FILE = os.path.join('config', 'npa_data.json')
 
 # Register Blueprints
 app.register_blueprint(vonage_bp)
-# --- START: MODIFICATION ---
+
 app.register_blueprint(notifications_bp)
-# --- END: MODIFICATION ---
+
 
 
 # --- Base Routes ---
@@ -38,7 +38,7 @@ def index():
     """Serves the main HTML page."""
     return render_template('index.html')
 
-# ... (other base routes are unchanged) ...
+
 @app.route('/api/ips', methods=['GET'])
 def get_stored_ips():
     ips = load_config_file(IP_CONFIG_FILE)
@@ -237,7 +237,7 @@ def import_credentials_from_file():
 # --- Log Management Routes ---
 @app.route('/api/logs/download')
 def download_logs():
-    # ... (function unchanged) ...
+
     log_dir = os.path.abspath('logs')
     if not os.path.isdir(log_dir):
         return jsonify({"error": "Log directory not found."}), 404
@@ -257,7 +257,7 @@ def download_logs():
 
 @app.route('/api/logs/clear', methods=['POST'])
 def clear_log_file():
-    # ... (function unchanged) ...
+
     if clear_logs():
         return jsonify({"message": "All log files cleared successfully."}), 200
     else:
@@ -270,16 +270,14 @@ if __name__ == '__main__':
     os.makedirs('config', exist_ok=True)
     os.makedirs('logs', exist_ok=True)
     os.makedirs('utils', exist_ok=True)
-    # --- START: MODIFICATION ---
+
     os.makedirs('routes', exist_ok=True)
-    # --- END: MODIFICATION ---
+
     os.makedirs('vendors/vonage', exist_ok=True)
     open('utils/__init__.py', 'a').close()
-    # --- START: MODIFICATION ---
+
     open('routes/__init__.py', 'a').close()
-    # --- END: MODIFICATION ---
+
     open('vendors/__init__.py', 'a').close()
     open('vendors/vonage/__init__.py', 'a').close()
     app.run(host='0.0.0.0', port=5000, debug=True)
-
-# --- END OF FILE app.py ---
