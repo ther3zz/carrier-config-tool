@@ -1,4 +1,3 @@
-// --- START OF FILE static/js/vonage.js ---
 import { apiFetch, state, processInBatches, formatMsisdnForApi, getNationalNumber } from './utils.js';
 import { displayResponse, handleFetchError, handleBackendResponse, addOrUpdateOperationStatus, toggleOperationControls } from './ui.js';
 import { getAuthPayload } from './credentials.js';
@@ -124,7 +123,7 @@ function renderSubaccounts() {
 let vonageIncludeStoredIps = true;
 
 export function setupPsipFeature() {
-    document.getElementById('vonage_psip_include_stored_ips')?.addEventListener('change', function() {
+    document.getElementById('vonage_psip_include_stored_ips')?.addEventListener('change', function () {
         vonageIncludeStoredIps = this.checked;
     });
 }
@@ -237,7 +236,7 @@ function renderPsipDomains() {
     });
 }
 
-// --- START: MODIFICATION ---
+
 export async function handlePsipDomainActions(event) {
     const target = event.target;
     event.preventDefault();
@@ -266,9 +265,9 @@ export async function handlePsipDomainActions(event) {
                 body: JSON.stringify(payload)
             });
             const data = await response.json();
-            
+
             if (!response.ok) throw (data);
-            
+
             handleBackendResponse(data);
             // Refresh the list after a successful update
             document.getElementById('vonageFetchPsipDomainsForm').requestSubmit();
@@ -294,11 +293,11 @@ export async function handlePsipDomainActions(event) {
                 body: JSON.stringify(payload)
             });
             const data = await response.json();
-            
+
             if (!response.ok) throw (data);
-            
+
             handleBackendResponse(data);
-             // Refresh the list after a successful deletion
+            // Refresh the list after a successful deletion
             document.getElementById('vonageFetchPsipDomainsForm').requestSubmit();
 
         } catch (error) {
@@ -312,7 +311,7 @@ export async function handlePsipDomainActions(event) {
         renderPsipDomains();
     }
 }
-// --- END: MODIFICATION ---
+
 
 
 // --- DID MANAGEMENT (Search, Buy, Configure, Modify, Release) ---
@@ -593,4 +592,80 @@ export function populateAllUriDatalists() {
     populateUriDatalist('stored-uris-list');
     populateUriDatalist('vonageModify_storedUrisDatalist');
 }
-// --- END OF FILE static/js/vonage.js ---
+
+// --- NUMBER SEARCH ACROSS SUBACCOUNTS ---
+
+export async function handleVonageNumberSearchSubmit(event) {
+    event.preventDefault();
+    const numbersTextarea = document.getElementById('vonage_search_subaccounts_numbers');
+    const resultsArea = document.getElementById('vonage_search_subaccounts_results_area');
+    const resultsTableBody = document.getElementById('vonage_search_subaccounts_results_table_body');
+
+    const numbers = numbersTextarea.value.split('\n').map(l => l.trim()).filter(l => l);
+
+    if (numbers.length === 0) {
+        displayResponse("Please enter at least one number.", "error");
+        return;
+    }
+
+    displayResponse(`Searching across all subaccounts for ${numbers.length} numbers...`, "pending");
+    resultsArea.style.display = 'none';
+    resultsTableBody.innerHTML = '';
+
+    try {
+        if (!state.masterKey) {
+            displayResponse("Master Key is not set. Please set it in 'Credential Management' first.", "error");
+            return;
+        }
+
+        const response = await apiFetch('/api/vonage/dids/search_ownership', {
+            method: 'POST',
+            body: JSON.stringify({
+                master_key: state.masterKey,
+                numbers: numbers
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || "Search failed.");
+        }
+
+        renderSubaccountSearchResults(data.results);
+        displayResponse("Search completed.", "success");
+
+    } catch (error) {
+        handleFetchError(error, "Number Search");
+    }
+}
+
+function renderSubaccountSearchResults(results) {
+    const resultsArea = document.getElementById('vonage_search_subaccounts_results_area');
+    const resultsTableBody = document.getElementById('vonage_search_subaccounts_results_table_body');
+    resultsTableBody.innerHTML = '';
+
+    if (!results || results.length === 0) {
+        resultsTableBody.innerHTML = '<tr><td colspan="4">No results returned.</td></tr>';
+    } else {
+        results.forEach(res => {
+            const tr = document.createElement('tr');
+
+            // Status styling
+            let statusClass = '';
+            if (res.status === 'found') statusClass = 'status-success';
+            else if (res.status === 'not_found') statusClass = 'status-warning';
+            else statusClass = 'status-error';
+
+            tr.innerHTML = `
+                <td>${res.number}</td>
+                <td><span class="status-tag ${statusClass}">${res.status}</span></td>
+                <td>${res.subaccount || '-'}</td>
+                <td>${res.friendly_name || '-'}</td>
+            `;
+            resultsTableBody.appendChild(tr);
+        });
+    }
+
+    resultsArea.style.display = 'block';
+}
