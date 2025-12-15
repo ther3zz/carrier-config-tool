@@ -1,0 +1,35 @@
+<div class="accordion-item">
+    <div class="accordion-header">Search Numbers in Subaccounts</div>
+    <div class="accordion-content">
+        <form id="vonageSearchSubaccountsForm" class="vonage-form">
+            <div class="form-group">
+                <label for="vonage_search_subaccounts_numbers" class="form-label">Phone Numbers (one per line):</label>
+                <textarea id="vonage_search_subaccounts_numbers" class="form-input" rows="5" placeholder="12015550123&#10;12015550124" required></textarea>
+                <div class="form-text">Enter a list of phone numbers to search for across all stored subaccounts.</div>
+            </div>
+            
+            <button type="submit" class="width-100 button-primary">Search</button>
+        </form>
+
+        <div id="vonage_search_subaccounts_results_area" style="display: none; margin-top: 20px;">
+            <h3>Results</h3>
+            <div class="status-list" id="vonage_search_subaccounts_results_list" style="max-height: 400px; overflow-y: auto;">
+                <!-- Results will be injected here -->
+            </div>
+            <div class="data-table-container">
+                 <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Number</th>
+                            <th>Status</th>
+                            <th>Subaccount Name</th>
+                            <th>Friendly Name</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vonage_search_subaccounts_results_table_body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
