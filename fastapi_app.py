@@ -2,6 +2,8 @@ import os
 import asyncio
 from collections import Counter
 from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, Depends, HTTPException, Security, status, Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.security import APIKeyHeader
@@ -18,7 +20,6 @@ from vendors.vonage import client as vonage_client
 from utils import db_manager
 
 # --- Environment and Configuration ---
-load_dotenv()
 app = FastAPI(
     title="DID Provisioning Service",
     description="A secure, high-performance API for provisioning and releasing DIDs.",
@@ -187,6 +188,18 @@ class DIDBatchReleaseResponse(BaseModel):
     success_count: int
     failed_count: int
     results: Optional[List[BatchResult]] = Field(None, description="Detailed results of each operation. Only present if 'debug=true' is in the query string.")
+
+class DIDOwnershipSearchRequest(BaseModel):
+    numbers: List[str] = Field(..., description="List of phone numbers to search for across all subaccounts.")
+    
+class DIDOwnershipResult(BaseModel):
+    number: str
+    status: str
+    subaccount: Optional[str] = None
+    friendly_name: Optional[str] = None
+
+class DIDOwnershipSearchResponse(BaseModel):
+    results: List[DIDOwnershipResult]
 
 # --- API Endpoints ---
 @app.on_event("startup")
@@ -588,6 +601,118 @@ async def provision_dids_batch_endpoint(request: DIDBatchProvisionRequest, reque
             final_message += " Stored defaults for the group were also updated."
         except Exception as e: final_message += f" However, failed to update the stored defaults for the group: {e}"
     return DIDBatchProvisionResponse(message=final_message, total_processed=len(request.npas), success_count=success_count, failed_count=failed_count, results=final_results)
+
+# --- START: NEW ENDPOINT ---
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def _check_ownership_single_sync(number, creds, log_enabled):
+    """
+    Checks if a single number exists in a subaccount.
+    Returns the result dict.
+    Duplicated from routes.py to verify ownership.
+    """
+    is_owned, response_data = vonage_client._verify_did_ownership(
+        username=creds['api_key'], 
+        password=creds['api_secret'], 
+        msisdn=number, 
+        log_enabled=log_enabled
+    )
+    
+    if log_enabled:
+        logger.log_request_response(
+            operation_name=f"CheckOwnership[{number}]",
+            request_details={"msisdn": number},
+            response_data=response_data,
+            status_code=200 if is_owned else 404,
+            account_id=creds.get('account_name')
+        )
+    
+    if is_owned:
+        return {
+            'number': number,
+            'status': 'found',
+            'subaccount': creds.get('api_key'),
+            'friendly_name': creds.get('account_name')
+        }
+    return None
+
+@app.post("/dids/search_ownership", response_model=DIDOwnershipSearchResponse, dependencies=[Depends(verify_ip_address), Depends(verify_api_key)], tags=["Search"])
+async def search_did_ownership_endpoint(request: DIDOwnershipSearchRequest, request_obj: Request):
+    logger.log_incoming_request(request_obj, request.model_dump())
+    # Removed STORAGE_MODE check to allow file-based usage, matching Flask behavior.
+    
+    log_enabled = settings_manager.get_setting('store_logs_enabled')
+    numbers = request.numbers
+    if not numbers: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No numbers provided.")
+
+    try:
+        # 1. Get ALL credentials
+        all_creds_dict = credentials_manager.get_all_credentials()
+        
+        # 2. Decrypt them all
+        decrypted_creds_list = []
+        for name, cred_data in all_creds_dict.items():
+            try:
+                from utils import encryption
+                decrypted_secret = encryption.decrypt_data(cred_data['encrypted_secret'], MASTER_KEY)
+                decrypted_creds_list.append({
+                    'account_name': name,
+                    'api_key': cred_data['api_key'],
+                    'api_secret': decrypted_secret
+                })
+            except Exception:
+                continue
+        
+        if not decrypted_creds_list:
+             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No credentials could be decrypted or found.")
+
+        results = []
+        max_threads = 10 
+        
+        # We'll use asyncio.to_thread to run the ThreadPoolExecutor logic in a non-blocking way for the main loop,
+        # but realistically since we are already inside an async function, we can just run the executor manually 
+        # or structure it to be async-friendly. 
+        # To keep it simple and consistent with the Flask implementation, we will use TPE inside a sync wrapper 
+        # or just run it. But wait, we cannot block the event loop.
+        # So we should offload the entire batch process to a thread.
+        
+        def run_search_batch():
+            batch_results = []
+            with ThreadPoolExecutor(max_workers=max_threads) as executor:
+                future_to_search = {}
+                for number in numbers:
+                    clean_number = "".join(filter(str.isdigit, number))
+                    if not clean_number: continue
+                    
+                    # Init placeholder
+                    batch_results.append({
+                        'number': clean_number, 
+                        'status': 'not_found', 
+                        'subaccount': None, 
+                        'friendly_name': None
+                    })
+                    current_idx = len(batch_results) - 1
+                    
+                    for creds in decrypted_creds_list:
+                        future = executor.submit(_check_ownership_single_sync, clean_number, creds, log_enabled)
+                        future_to_search[future] = current_idx
+                        
+                for future in as_completed(future_to_search):
+                    idx = future_to_search[future]
+                    try:
+                        found_data = future.result()
+                        if found_data:
+                            batch_results[idx] = found_data
+                    except Exception as e:
+                        print(f"Error checking ownership: {e}")
+            return batch_results
+
+        final_results = await asyncio.to_thread(run_search_batch)
+        return DIDOwnershipSearchResponse(results=final_results)
+
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error: {str(e)}")
+
 
 # --- HELPER FUNCTIONS ---
 
