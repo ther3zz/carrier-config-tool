@@ -1,4 +1,3 @@
-// --- START OF FILE static/js/main.js ---
 import { apiFetch, appSettings, state } from './utils.js';
 import { openOuterTab, openInnerTab, setupAccordionBehavior, setupModalHandlers, stopAllOperations } from './ui.js';
 import { setupSettingsEventListeners } from './settings.js';
@@ -13,6 +12,7 @@ import {
     handleVonageSearchSubmit, updateSelectedCount, handlePurchaseButtonClick,
     handleBulkNpaPurchaseClick, handleConfigureClick, handleExportClick,
     handleVonageModifyDidSubmit, handleVonageReleaseDidSubmit,
+    handleVonageNumberSearchSubmit,
     renderStoredItems, handleAddStoredItem, populateAllUriDatalists
 } from './vonage.js';
 
@@ -64,7 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Make tab functions globally accessible from HTML onclick attributes
     window.openOuterTab = openOuterTab;
     window.openInnerTab = openInnerTab;
-    
+
     // --- Initial Setup ---
     loadInitialData();
     setupAccordionBehavior();
@@ -106,13 +106,13 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('vonageFetchSubaccountsForm')?.addEventListener('submit', handleFetchSubaccounts);
     document.getElementById('vonageCreateSubaccountForm')?.addEventListener('submit', handleCreateSubaccount);
     document.getElementById('vonage-subaccount-list')?.addEventListener('click', handleSubaccountActions);
-    document.getElementById('vonage_new_subaccount_use_primary_balance')?.addEventListener('change', function() {
+    document.getElementById('vonage_new_subaccount_use_primary_balance')?.addEventListener('change', function () {
         document.getElementById('vonage_new_subaccount_use_primary_balance_status').textContent = this.checked ? 'On' : 'Off';
     });
 
     // PSIP
     document.getElementById('vonagePsipForm')?.addEventListener('submit', handleVonagePsipSubmit);
-    document.getElementById('vonage_psip_digest_auth')?.addEventListener('change', function() {
+    document.getElementById('vonage_psip_digest_auth')?.addEventListener('change', function () {
         document.getElementById('vonage_psip_digest_auth_status').textContent = this.checked ? 'On' : 'Off';
     });
     document.querySelectorAll('.add-stored-item-btn').forEach(b => b.addEventListener('click', handleAddStoredItem));
@@ -133,19 +133,19 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('search-results-container')?.addEventListener('change', e => {
         if (e.target.classList.contains('did-checkbox')) updateSelectedCount();
     });
-    
+
     // Modify DIDs
     const mdf = document.getElementById('vonageModifyDidForm');
     if (mdf) {
         mdf.addEventListener('submit', handleVonageModifyDidSubmit);
         // Additional setup for the modify form toggles
-        document.getElementById('vonageModify_mode_toggle')?.addEventListener('change', function() {
+        document.getElementById('vonageModify_mode_toggle')?.addEventListener('change', function () {
             const c = this.checked;
             document.getElementById('vonageModify_mode_status').textContent = c ? 'CSV Upload' : 'Manual Entry';
             document.getElementById('vonageModify_csv_section').style.display = c ? 'block' : 'none';
             document.getElementById('vonageModify_manual_section').style.display = c ? 'none' : 'block';
         });
-        document.getElementById('vonageModify_country_mode_toggle')?.addEventListener('change', function() {
+        document.getElementById('vonageModify_country_mode_toggle')?.addEventListener('change', function () {
             const m = this.checked;
             document.getElementById('vonageModify_country_other_container').style.display = m ? 'block' : 'none';
             document.querySelector('#vonageModifyDidForm .country-mode-status').textContent = m ? 'Other (Manual)' : 'US/CA (Auto-Detect)';
@@ -158,13 +158,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-    
+
     // Release DIDs
     document.getElementById('vonageReleaseDidForm')?.addEventListener('submit', handleVonageReleaseDidSubmit);
-    document.getElementById('vonageRelease_country_mode_toggle')?.addEventListener('change', function() {
+    document.getElementById('vonageRelease_country_mode_toggle')?.addEventListener('change', function () {
         const isManual = this.checked;
         document.getElementById('vonageRelease_country_other_container').style.display = isManual ? 'block' : 'none';
         document.querySelector('#vonageReleaseDidForm .country-mode-status').textContent = isManual ? 'Other (Manual)' : 'US/CA (Auto-Detect)';
     });
+
+    // Search Numbers in Subaccounts
+    document.getElementById('vonageSearchSubaccountsForm')?.addEventListener('submit', handleVonageNumberSearchSubmit);
 });
-// --- END OF FILE static/js/main.js ---
