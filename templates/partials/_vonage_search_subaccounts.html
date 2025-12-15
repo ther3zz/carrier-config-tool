@@ -1,23 +1,22 @@
-<div class="accordion-item">
-    <div class="accordion-header">Search Numbers in Subaccounts</div>
-    <div class="accordion-content">
+<details id="vonageSearchSubaccountsAccordion">
+    <summary>Search Numbers in Subaccounts</summary>
+    <div class="action-content">
+        <p>Search for a list of phone numbers across all stored credentials to find which subaccount owns them.</p>
         <form id="vonageSearchSubaccountsForm" class="vonage-form">
             <div class="form-group">
                 <label for="vonage_search_subaccounts_numbers" class="form-label">Phone Numbers (one per line):</label>
-                <textarea id="vonage_search_subaccounts_numbers" class="form-input" rows="5" placeholder="12015550123&#10;12015550124" required></textarea>
-                <div class="form-text">Enter a list of phone numbers to search for across all stored subaccounts.</div>
+                <textarea id="vonage_search_subaccounts_numbers" class="form-input" rows="5"
+                    placeholder="12015550123&#10;12015550124" required></textarea>
+                <div class="form-text">Enter plain phone numbers. We will strip non-digits for you.</div>
             </div>
-            
-            <button type="submit" class="width-100 button-primary">Search</button>
+
+            <button type="submit" class="width-100 button-primary">Search All Subaccounts</button>
         </form>
 
         <div id="vonage_search_subaccounts_results_area" style="display: none; margin-top: 20px;">
             <h3>Results</h3>
-            <div class="status-list" id="vonage_search_subaccounts_results_list" style="max-height: 400px; overflow-y: auto;">
-                <!-- Results will be injected here -->
-            </div>
             <div class="data-table-container">
-                 <table class="data-table">
+                <table class="data-table">
                     <thead>
                         <tr>
                             <th>Number</th>
@@ -30,6 +29,7 @@
                     </tbody>
                 </table>
             </div>
+            <div id="vonage_search_subaccounts_status" style="margin-top: 10px;"></div>
         </div>
     </div>
-</div>
+</details>
