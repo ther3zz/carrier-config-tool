@@ -239,9 +239,11 @@ function renderPsipDomains() {
 
 export async function handlePsipDomainActions(event) {
     const target = event.target;
-    event.preventDefault();
+    // event.preventDefault(); // Removing unconditional preventDefault which broke accordion
+
 
     if (target.classList.contains('save-psip-changes-btn')) {
+        event.preventDefault();
         const form = target.closest('.vonage-psip-domain-form');
         const originalName = form.querySelector('.original-domain-name').value;
         displayResponse(`Updating PSIP domain '${originalName}'...`, 'pending');
@@ -276,6 +278,7 @@ export async function handlePsipDomainActions(event) {
             handleBackendResponse(error); // handleBackendResponse can handle error objects
         }
     } else if (target.classList.contains('delete-psip-domain-btn')) {
+        event.preventDefault();
         const form = target.closest('.vonage-psip-domain-form');
         const domainName = form.querySelector('.domain-name').value;
 
@@ -305,6 +308,7 @@ export async function handlePsipDomainActions(event) {
         }
 
     } else if (target.classList.contains('cancel-psip-edit-btn')) {
+        event.preventDefault();
         // Close the details panel to cancel editing
         target.closest('details').open = false;
         // Re-render the list from state to discard any user changes in the form
