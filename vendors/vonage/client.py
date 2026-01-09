@@ -352,18 +352,73 @@ def update_did(username, password, country, msisdn, config, log_enabled=False, t
 # --- Subaccount Management Client Functions ---
 def list_subaccounts(primary_api_key, primary_api_secret, log_enabled=False):
     operation_name = f"Vonage List Subaccounts ({primary_api_key})"
-    url = f"{VONAGE_ACCOUNTS_API_URL}/{primary_api_key}/subaccounts"
-    request_details = {"URL": url, "Method": "GET", "Auth": (primary_api_key, primary_api_secret)}
-    response_data, status_code = None, None
+    base_url = f"{VONAGE_ACCOUNTS_API_URL}/{primary_api_key}/subaccounts"
+    
+    # Store all collected subaccounts here
+    all_subaccounts = []
+    current_url = base_url
+    
+    # We will accumulate the raw response data from the last page to return metadata/structure if needed,
+    # or construct a new clean response.
+    last_response_data = {}
+    status_code = 200
+
     try:
-        response = requests.get(url, auth=(primary_api_key, primary_api_secret), headers={'Accept': 'application/json'}, timeout=30)
-        response.raise_for_status()
-        response_data = response.json()
-        status_code = response.status_code
-    except requests.exceptions.RequestException as e: response_data, status_code = _handle_vonage_error(e, operation_name)
-    except Exception as e: response_data, status_code = _handle_vonage_error(e, operation_name)
+        while current_url:
+            request_details = {"URL": current_url, "Method": "GET", "Auth": (primary_api_key, primary_api_secret)}
+            
+            response = requests.get(current_url, auth=(primary_api_key, primary_api_secret), headers={'Accept': 'application/json'}, timeout=30)
+            status_code = response.status_code
+            
+            if status_code >= 400:
+                # If we hit an error, parse it using the helper and break/return
+                try:
+                    error_json = response.json()
+                except:
+                    error_json = {"raw": response.text}
+                
+                # If it's the first page, just return the error. 
+                # If we successfully fetched pages before, we might want to return partial results, 
+                # but usually an error mid-stream is fatal for the list integrity.
+                if not all_subaccounts:
+                    response.raise_for_status() # Trigger the standard error handling block
+                else:
+                    print(f"Error fetching subsequent page: {status_code}")
+                    break
+
+            data = response.json()
+            last_response_data = data
+            
+            # Extract subaccounts from HAL structure (_embedded.subaccounts) or direct list
+            page_subs = []
+            if '_embedded' in data and 'subaccounts' in data['_embedded']:
+                page_subs = data['_embedded']['subaccounts']
+            elif 'subaccounts' in data:
+                # Fallback for non-HAL or simplified responses
+                page_subs = data['subaccounts']
+                
+            all_subaccounts.extend(page_subs)
+            
+            # Check for next page link
+            if '_links' in data and 'next' in data['_links'] and 'href' in data['_links']['next']:
+                current_url = data['_links']['next']['href']
+            else:
+                current_url = None
+        
+        # Construct the final response expected by the UI ({ "subaccounts": [...] })
+        response_data = {
+            "subaccounts": all_subaccounts,
+            "total_fetched": len(all_subaccounts)
+        }
+
+    except requests.exceptions.RequestException as e: 
+        response_data, status_code = _handle_vonage_error(e, operation_name)
+    except Exception as e: 
+        response_data, status_code = _handle_vonage_error(e, operation_name)
     finally:
-        if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=primary_api_key)
+        if log_enabled: 
+            log_request_response(operation_name, {"Method": "GET", "TotalItems": len(all_subaccounts)}, response_data, status_code, account_id=primary_api_key)
+            
     return response_data, status_code
 
 def create_subaccount(primary_api_key, primary_api_secret, payload, log_enabled=False):
