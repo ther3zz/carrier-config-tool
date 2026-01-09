@@ -3,7 +3,8 @@ import { openOuterTab, openInnerTab, setupAccordionBehavior, setupModalHandlers,
 import { setupSettingsEventListeners } from './settings.js';
 import {
     handleSetMasterKey, handleAddCredential, handleCredentialListActions,
-    handleBulkImportCredentials, handleImportFromFile, handleRekeyCredentials
+    handleBulkImportCredentials, handleImportFromFile, handleRekeyCredentials,
+    setupCredentialSelectorEventListeners
 } from './credentials.js';
 import {
     handleFetchSubaccounts, handleCreateSubaccount, handleSubaccountActions,
@@ -71,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupModalHandlers();
     setupSettingsEventListeners();
     setupPsipFeature();
+    setupCredentialSelectorEventListeners();
 
     // --- Credential Selector Template Population ---
     const selectorTemplate = document.getElementById('credential-selector-template');
