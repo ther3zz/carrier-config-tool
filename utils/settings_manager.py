@@ -1,10 +1,8 @@
-# --- START OF FILE utils/settings_manager.py ---
-
 import os
 from threading import Lock
 from . import db_manager
 
-# --- START: MODIFICATION (Add Granular Notification Toggles) ---
+
 DEFAULT_SETTINGS = {
     'max_concurrent_requests': '5',
     'delay_between_batches_ms': '1000',
@@ -18,9 +16,10 @@ DEFAULT_SETTINGS = {
     'notifications_content_type': 'application/json',
     'notifications_on_subaccount_created': 'False', # Granular switch
     'notifications_on_did_provisioned': 'False',   # Granular switch
-    'notifications_on_did_released': 'False'       # Granular switch
+    'notifications_on_did_released': 'False',       # Granular switch
+    'notifications_on_did_transferred': 'False'     # Granular switch
 }
-# --- END: MODIFICATION ---
+
 
 # A simple in-memory cache for settings to reduce DB calls.
 settings_cache = {}
@@ -79,4 +78,3 @@ def save_settings(new_settings: dict):
 
 # Initialize the cache on startup
 get_all_settings()
-# --- END OF FILE utils/settings_manager.py ---
