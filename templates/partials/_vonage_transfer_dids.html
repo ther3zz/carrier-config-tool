@@ -1,0 +1,67 @@
+
+<details id="vonageTransferDidAccordion">
+    <summary>Transfer DIDs</summary>
+    <div class="action-content">
+        <h3>Transfer DIDs Between Subaccounts</h3>
+        <p>Move phone numbers from one subaccount to another under the same primary account. This is a permanent and irreversible operation.</p>
+        <p style="font-size: 0.9em; color: #666;"><i>Request rate/concurrency can be adjusted via the ⚙ settings icon in the page header.</i></p>
+        <form id="vonageTransferDidForm">
+            <h4>Primary Account Credentials</h4>
+            <p style="font-size: 0.85em; color: #888;">The primary account is used to authenticate the transfer. Both source and destination must be subaccounts under this primary.</p>
+            <div class="credential-selector-container" data-id-prefix="vonageTransfer"></div>
+
+            <h4>Subaccount Selection</h4>
+            <p style="font-size: 0.85em; color: #888;">First, fetch the list of subaccounts. Then select the source (from) and destination (to) accounts below.</p>
+            <div class="form-group">
+                <button type="button" id="vonageTransfer_fetchSubaccounts" class="action-button preview-button">Fetch Subaccounts</button>
+            </div>
+
+            <div id="vonageTransfer_subaccountSelectors" style="display: none;">
+                <div class="form-group-grid">
+                    <div class="form-group">
+                        <label for="vonageTransfer_from_api_key">Source (From) Subaccount:</label>
+                        <select id="vonageTransfer_from_api_key" required>
+                            <option value="">-- Fetch subaccounts first --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="vonageTransfer_to_api_key">Destination (To) Subaccount:</label>
+                        <select id="vonageTransfer_to_api_key" required>
+                            <option value="">-- Fetch subaccounts first --</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <h4>Country & DIDs</h4>
+            <div class="form-group">
+                <label>Country Mode:</label>
+                <div class="toggle-container" style="justify-content: flex-start;">
+                    <label class="toggle">
+                        <input type="checkbox" id="vonageTransfer_country_mode_toggle">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="country-mode-status" style="margin-left: 10px; font-weight:bold;">US/CA (Auto-Detect)</span>
+                </div>
+                <small>Toggle on to manually specify a country code for all DIDs in the textarea below.</small>
+                <div id="vonageTransfer_country_other_container" style="display: none; margin-top: 10px;">
+                    <label for="vonageTransfer_country_other_input">Country Code:</label>
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                        <input type="text" id="vonageTransfer_country_other_input" maxlength="2" placeholder="e.g., GB" pattern="[A-Za-z]{2}" title="2-letter country code" style="flex-grow: 1;">
+                        <button type="button" class="info-button showCountryCodesBtn" title="View Country Codes">?</button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="vonageTransfer_msisdns">DIDs to Transfer (One per line):</label>
+                <textarea id="vonageTransfer_msisdns" placeholder="19545550100&#10;447700900000&#10;9055550101" rows="5" required></textarea>
+            </div>
+            <button type="submit" class="danger-button">Transfer DID(s)</button>
+            <button type="button" id="stop_transfer_button" class="stop-button" style="display: none;">Stop Transfer</button>
+        </form>
+        <div id="vonageTransferDidStatusArea" style="margin-top: 20px; display: none;">
+            <h4>Transfer Status per DID:</h4>
+            <ul id="vonageTransferDidStatusList" style="list-style-type: none; padding-left: 0;"></ul>
+        </div>
+    </div>
+</details>
