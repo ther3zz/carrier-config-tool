@@ -1,4 +1,3 @@
-// --- START OF FILE static/js/ui.js ---
 import { state, countryData } from './utils.js';
 
 // --- TABS & ACCORDIONS ---
@@ -69,7 +68,7 @@ export function setupAccordionBehavior() {
                         const firstInnerTabContentId = firstInnerTabLink?.getAttribute('onclick').match(/'([^']+)'/)[1];
                         const firstInnerTabContent = details.querySelector(`#${firstInnerTabContentId}`);
                         if (firstInnerTabLink && firstInnerTabContent && !firstInnerTabLink.classList.contains('active')) {
-                             openInnerTab({ currentTarget: firstInnerTabLink }, firstInnerTabContent.id, firstInnerTabLink);
+                            openInnerTab({ currentTarget: firstInnerTabLink }, firstInnerTabContent.id, firstInnerTabLink);
                         }
                     }
                 }
@@ -112,7 +111,7 @@ export function setupModalHandlers() {
     // Populate and add search to country code modal
     const countryCodeList = document.getElementById('countryCodesList');
     if (countryCodeList) {
-        countryCodeList.innerHTML = `<ul style="list-style-type:none;padding:0;">${countryData.sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`<li data-country-name="${c.name.toLowerCase()}" style="padding:5px;border-bottom:1px solid #eee;">${c.name} (<strong>${c.code}</strong>) - +${c.dial}</li>`).join('')}</ul>`;
+        countryCodeList.innerHTML = `<ul style="list-style-type:none;padding:0;">${countryData.sort((a, b) => a.name.localeCompare(b.name)).map(c => `<li data-country-name="${c.name.toLowerCase()}" style="padding:5px;border-bottom:1px solid #eee;">${c.name} (<strong>${c.code}</strong>) - +${c.dial}</li>`).join('')}</ul>`;
     }
     document.getElementById('countryCodeSearch')?.addEventListener('keyup', e => {
         const filter = e.target.value.toLowerCase();
@@ -152,8 +151,8 @@ export function clearResponse() {
 export function handleBackendResponse(data) {
     if (data.error) {
         let msg = `Error: ${data.error}\n`;
-        if(data.status_code) msg += `Status Code: ${data.status_code}\n`;
-        if(data.response_data_json && Object.keys(data.response_data_json).length > 0) {
+        if (data.status_code) msg += `Status Code: ${data.status_code}\n`;
+        if (data.response_data_json && Object.keys(data.response_data_json).length > 0) {
             msg += "API Error (JSON):\n" + JSON.stringify(data.response_data_json, null, 2);
         } else if (data.response_data_text) {
             msg += "API Error (Text):\n" + data.response_data_text;
@@ -213,7 +212,8 @@ export function toggleOperationControls(operationName, isStarting) {
         bulk: { startBtn: document.getElementById('vonage_bulk_npa_purchase_button'), stopBtn: document.getElementById('stop_bulk_purchase_button'), reattemptBtn: document.getElementById('vonage_reattempt_npa_button') },
         configure: { startBtn: document.getElementById('vonage_configure_button'), stopBtn: document.getElementById('stop_configure_button'), },
         modify: { startBtn: document.querySelector('#vonageModifyDidForm button[type="submit"]'), stopBtn: document.getElementById('stop_modify_button'), },
-        release: { startBtn: document.querySelector('#vonageReleaseDidForm button[type="submit"]'), stopBtn: document.getElementById('stop_release_button'), }
+        release: { startBtn: document.querySelector('#vonageReleaseDidForm button[type="submit"]'), stopBtn: document.getElementById('stop_release_button'), },
+        transfer: { startBtn: document.querySelector('#vonageTransferDidForm button[type="submit"]'), stopBtn: document.getElementById('stop_transfer_button'), }
     };
 
     const op = controls[operationName];
@@ -255,4 +255,3 @@ export function stopAllOperations() {
     });
     displayResponse("Stop requested. The current batch of requests will finish, then the process will halt.", 'pending');
 }
-// --- END OF FILE static/js/ui.js ---
