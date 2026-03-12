@@ -1,3 +1,5 @@
+# --- START OF FILE app.py ---
+
 import os
 import io
 import zipfile
@@ -15,7 +17,9 @@ from utils import credentials_manager
 from utils import encryption
 from utils import settings_manager
 from vendors.vonage.routes import vonage_bp
+from vendors.vonage.transfer_routes import vonage_transfer_bp
 from routes.notifications import notifications_bp
+
 
 app = Flask(__name__)
 
@@ -26,6 +30,8 @@ NPA_DATA_CONFIG_FILE = os.path.join('config', 'npa_data.json')
 
 # Register Blueprints
 app.register_blueprint(vonage_bp)
+app.register_blueprint(vonage_transfer_bp)
+
 app.register_blueprint(notifications_bp)
 
 
@@ -272,4 +278,3 @@ if __name__ == '__main__':
     open('vendors/__init__.py', 'a').close()
     open('vendors/vonage/__init__.py', 'a').close()
     app.run(host='0.0.0.0', port=5000, debug=True)
-
