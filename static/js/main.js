@@ -16,6 +16,9 @@ import {
     handleVonageNumberSearchSubmit,
     renderStoredItems, handleAddStoredItem, populateAllUriDatalists
 } from './vonage.js';
+import {
+    handleFetchTransferSubaccounts, handleTransferDidsSubmit
+} from './transfer.js';
 
 
 /**
@@ -171,4 +174,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Search Numbers in Subaccounts
     document.getElementById('vonageSearchSubaccountsForm')?.addEventListener('submit', handleVonageNumberSearchSubmit);
+
+    // Transfer DIDs
+    document.getElementById('vonageTransfer_fetchSubaccounts')?.addEventListener('click', handleFetchTransferSubaccounts);
+    document.getElementById('vonageTransferDidForm')?.addEventListener('submit', handleTransferDidsSubmit);
+    document.getElementById('vonageTransfer_country_mode_toggle')?.addEventListener('change', function () {
+        const isManual = this.checked;
+        document.getElementById('vonageTransfer_country_other_container').style.display = isManual ? 'block' : 'none';
+        document.querySelector('#vonageTransferDidForm .country-mode-status').textContent = isManual ? 'Other (Manual)' : 'US/CA (Auto-Detect)';
+    });
 });
