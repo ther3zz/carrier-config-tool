@@ -1,5 +1,3 @@
-// --- START OF FILE static/js/utils.js ---
-
 // --- SHARED STATE & CONFIGURATION ---
 
 // App settings will be populated from the backend
@@ -16,7 +14,8 @@ export let appSettings = {
     notifications_content_type: 'application/json',
     notifications_on_subaccount_created: false,
     notifications_on_did_provisioned: false,
-    notifications_on_did_released: false
+    notifications_on_did_released: false,
+    notifications_on_did_transferred: false
 };
 
 // Global state variables
@@ -159,10 +158,10 @@ export async function processInBatches(items, processFn, updateStatusFn, targetS
                     await sleep(delayBetween);
                     updateStatusFn(lastProcessedItemId, originalText, 'success', targetStatusListElement);
                 } else {
-                     await sleep(delayBetween);
+                    await sleep(delayBetween);
                 }
             } else {
-                 await sleep(delayBetween);
+                await sleep(delayBetween);
             }
         }
     }
@@ -196,4 +195,3 @@ export function getNationalNumber(msisdn, country) {
     }
     return nationalNum;
 }
-// --- END OF FILE static/js/utils.js ---
