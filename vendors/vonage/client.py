@@ -452,3 +452,51 @@ def update_subaccount(primary_api_key, primary_api_secret, subaccount_key, paylo
     finally:
         if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=primary_api_key)
     return response_data, status_code
+
+
+def transfer_number(primary_api_key, primary_api_secret, from_api_key, to_api_key, number, country, log_enabled=False):
+    """
+    Transfers a phone number from one subaccount to another under the same primary account.
+    
+    Uses the Vonage Subaccounts API:
+    POST https://api.nexmo.com/accounts/{api_key}/transfer-number
+    
+    Auth: Basic (primary_api_key, primary_api_secret)
+    
+    NOTE: Audit logging always fires for transfer operations regardless of log_enabled,
+    because transfers are high-impact asset movements that must be tracked.
+    """
+    operation_name = f"Vonage Transfer Number ({number})"
+    url = f"{VONAGE_ACCOUNTS_API_URL}/{primary_api_key}/transfer-number"
+    transfer_payload = {
+        "from": from_api_key,
+        "to": to_api_key,
+        "number": number,
+        "country": country
+    }
+    request_details = {
+        "URL": url,
+        "Method": "POST",
+        "Auth": (primary_api_key, "***"),
+        "Payload": transfer_payload
+    }
+    response_data, status_code = None, None
+    try:
+        response = requests.post(
+            url,
+            auth=(primary_api_key, primary_api_secret),
+            json=transfer_payload,
+            headers={'Accept': 'application/json'},
+            timeout=30
+        )
+        response.raise_for_status()
+        response_data = response.json()
+        status_code = response.status_code
+    except requests.exceptions.RequestException as e:
+        response_data, status_code = _handle_vonage_error(e, operation_name)
+    except Exception as e:
+        response_data, status_code = _handle_vonage_error(e, operation_name)
+    finally:
+        # SECURITY: Always log transfer operations — they are high-impact asset movements.
+        log_request_response(operation_name, request_details, response_data, status_code, account_id=primary_api_key)
+    return response_data, status_code
