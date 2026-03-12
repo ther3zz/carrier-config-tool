@@ -1,4 +1,3 @@
-// --- START OF FILE static/js/settings.js ---
 import { apiFetch, appSettings } from './utils.js';
 import { displayResponse, handleFetchError } from './ui.js';
 
@@ -39,6 +38,7 @@ export async function openSettingsModal() {
     document.getElementById('notificationsOnSubaccountCreated').checked = String(appSettings.notifications_on_subaccount_created).toLowerCase() === 'true';
     document.getElementById('notificationsOnDidProvisioned').checked = String(appSettings.notifications_on_did_provisioned).toLowerCase() === 'true';
     document.getElementById('notificationsOnDidReleased').checked = String(appSettings.notifications_on_did_released).toLowerCase() === 'true';
+    document.getElementById('notificationsOnDidTransferred').checked = String(appSettings.notifications_on_did_transferred).toLowerCase() === 'true';
 
     toggleNotificationDetails();
     settingsModal.style.display = 'block';
@@ -61,7 +61,8 @@ export async function saveSettings() {
         notifications_content_type: document.getElementById('notificationsContentType').value,
         notifications_on_subaccount_created: document.getElementById('notificationsOnSubaccountCreated').checked,
         notifications_on_did_provisioned: document.getElementById('notificationsOnDidProvisioned').checked,
-        notifications_on_did_released: document.getElementById('notificationsOnDidReleased').checked
+        notifications_on_did_released: document.getElementById('notificationsOnDidReleased').checked,
+        notifications_on_did_transferred: document.getElementById('notificationsOnDidTransferred').checked
     };
 
     try {
@@ -71,7 +72,7 @@ export async function saveSettings() {
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Failed to save");
-        
+
         // Update the global settings object on successful save
         Object.assign(appSettings, newSettings);
 
@@ -152,4 +153,3 @@ export function setupSettingsEventListeners() {
 
     document.getElementById('notificationsEnabledToggle')?.addEventListener('change', toggleNotificationDetails);
 }
-// --- END OF FILE static/js/settings.js ---
