@@ -68,6 +68,33 @@ def _get_national_number(msisdn: str, country: str) -> str:
         return msisdn[1:]
     return msisdn
 
+def _resolve_country_and_msisdn(raw_did: str, country_hint: Optional[str] = None) -> tuple:
+    """
+    Resolves country and normalized MSISDN from a raw DID string.
+
+    Returns (country, msisdn) where country may be None if detection fails.
+    The MSISDN is sanitized to digits-only and prefixed with '1' for US/CA
+    numbers when the prefix is missing.
+
+    This is the single source of truth for country auto-detection logic.
+    Callers are responsible for their own error handling when country is None.
+    """
+    msisdn = "".join(filter(str.isdigit, raw_did))
+    country = country_hint.upper() if country_hint else None
+
+    if not country:
+        national_number = msisdn[-10:]
+        if len(national_number) == 10:
+            npa = national_number[:3]
+            if npa in NPA_DATA.get('US', []):
+                country = 'US'
+            elif npa in NPA_DATA.get('CA', []):
+                country = 'CA'
+            if country and not msisdn.startswith('1'):
+                msisdn = '1' + national_number
+
+    return country, msisdn
+
 # --- Pydantic Data Models ---
 class DIDProvisionRequest(BaseModel):
     groupid: str = Field(..., description="The unique group ID to match against a subaccount name.")
@@ -179,6 +206,46 @@ class DIDBatchProvisionResponse(BaseModel):
     failed_count: int
     results: List[BatchProvisionResult]
 
+class DIDBatchReleaseItem(BaseModel):
+    """A single DID entry within a batch release request."""
+    did: str = Field(
+        ...,
+        description="The phone number (DID) to release.",
+        pattern=r'^\d{10,15}$'
+    )
+    country: Optional[str] = Field(
+        None,
+        description="Optional. 2-letter ISO country code (e.g., 'US', 'CA'). Auto-detected for US/CA if omitted.",
+        min_length=2,
+        max_length=2
+    )
+
+    @field_validator('country')
+    def uppercase_country_code(cls, v):
+        if v is not None:
+            return v.upper()
+        return v
+
+class DIDBatchReleaseRequest(BaseModel):
+    """Request body for releasing multiple DIDs in a single batch operation."""
+    groupid: str = Field(
+        ...,
+        description="The group ID for the account that owns all DIDs in the list."
+    )
+    dids: List[DIDBatchReleaseItem] = Field(
+        ...,
+        description="A list of DIDs to release.",
+        min_length=1
+    )
+
+class DIDBatchReleaseResponse(BaseModel):
+    """Response body for a batch release operation."""
+    message: str
+    total_processed: int
+    success_count: int
+    failed_count: int
+    results: List[BatchResult]
+
 # --- API Endpoints ---
 @app.on_event("startup")
 async def startup_event():
@@ -288,17 +355,9 @@ async def update_did_endpoint(request: DIDUpdateRequest, request_obj: Request):
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
-    country_to_use = request.country
-    msisdn_to_use = "".join(filter(str.isdigit, request.did))
+    country_to_use, msisdn_to_use = _resolve_country_and_msisdn(request.did, request.country)
     if not country_to_use:
-        national_number = msisdn_to_use[-10:]
-        if len(national_number) == 10:
-            npa = national_number[:3]
-            if npa in NPA_DATA.get('US', []): country_to_use = 'US'
-            elif npa in NPA_DATA.get('CA', []): country_to_use = 'CA'
-            if country_to_use and not msisdn_to_use.startswith('1'): msisdn_to_use = '1' + national_number
-        if not country_to_use:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not auto-detect country from DID. Please provide a 2-letter 'country' code for non-US/CA numbers.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not auto-detect country from DID. Please provide a 2-letter 'country' code for non-US/CA numbers.")
     if log_enabled:
         logger.log_request_response(
             operation_name="Incoming DID Update Request",
@@ -355,16 +414,9 @@ async def release_did_endpoint(request: DIDReleaseRequest, request_obj: Request)
     try:
         subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(request.groupid, MASTER_KEY)
     except ValueError as e: raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}")
-    country_to_use = request.country
-    msisdn_to_use = "".join(filter(str.isdigit, request.did))
+    country_to_use, msisdn_to_use = _resolve_country_and_msisdn(request.did, request.country)
     if not country_to_use:
-        national_number = msisdn_to_use[-10:]
-        if len(national_number) == 10:
-            npa = national_number[:3]
-            if npa in NPA_DATA.get('US', []): country_to_use = 'US'
-            elif npa in NPA_DATA.get('CA', []): country_to_use = 'CA'
-            if country_to_use and not msisdn_to_use.startswith('1'): msisdn_to_use = '1' + national_number
-        if not country_to_use: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not auto-detect country from DID. Please provide a 2-letter 'country' code for non-US/CA numbers.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not auto-detect country from DID. Please provide a 2-letter 'country' code for non-US/CA numbers.")
     if log_enabled: logger.log_request_response(operation_name="Incoming Release Request", request_details={ "client_ip": request_obj.client.host, "payload": request.model_dump() }, response_data={"status": "Request accepted for processing", "determined_country": country_to_use}, status_code=202, account_id=subaccount_creds['api_key'])
     result_data, status_code = vonage_client.cancel_did(username=subaccount_creds['api_key'], password=subaccount_creds['api_secret'], country=country_to_use, msisdn=msisdn_to_use, log_enabled=log_enabled)
     if status_code >= 400: raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to release DID {request.did}. Vonage API error: {result_data.get('error', 'Unknown error')}")
@@ -457,17 +509,9 @@ async def update_dids_batch_endpoint(request: DIDBatchUpdateRequest):
 
 async def _process_single_did_update(did_item, subaccount_creds, request, log_enabled, treat_420_as_success):
     try:
-        country_to_use = did_item.country
-        msisdn_to_use = "".join(filter(str.isdigit, did_item.did))
+        country_to_use, msisdn_to_use = _resolve_country_and_msisdn(did_item.did, did_item.country)
         if not country_to_use:
-            national_number = msisdn_to_use[-10:]
-            if len(national_number) == 10:
-                npa = national_number[:3]
-                if npa in NPA_DATA.get('US', []): country_to_use = 'US'
-                elif npa in NPA_DATA.get('CA', []): country_to_use = 'CA'
-                if country_to_use and not msisdn_to_use.startswith('1'): msisdn_to_use = '1' + national_number
-            if not country_to_use:
-                return BatchResult(did=did_item.did, status='failed', detail="Could not auto-detect country. Please provide a 2-letter 'country' code.")
+            return BatchResult(did=did_item.did, status='failed', detail="Could not auto-detect country. Please provide a 2-letter 'country' code.")
         update_config = {}
         update_config['voiceCallbackType'] = request.voice_callback_type
         final_callback_value = request.voice_callback_value
@@ -634,3 +678,136 @@ async def _process_single_did_provision(npa, groupid, subaccount_creds, request,
 
     except Exception as e:
         return BatchProvisionResult(npa=npa, status='failed', detail=f"An unexpected internal error occurred: {str(e)}")
+
+
+# --- Batch Release Endpoint ---
+
+@app.post(
+    "/release-dids-batch",
+    response_model=DIDBatchReleaseResponse,
+    dependencies=[Depends(verify_ip_address), Depends(verify_api_key)],
+    tags=["Provisioning"],
+    summary="Release multiple DIDs in a single batch operation"
+)
+async def release_dids_batch_endpoint(request: DIDBatchReleaseRequest):
+    """
+    Releases multiple phone numbers (DIDs) from a subaccount in a single request.
+
+    Each DID is processed independently — individual failures do not abort the batch.
+    Concurrency and inter-batch delay are controlled by application settings
+    (`max_concurrent_requests`, `delay_between_batches_ms`).
+
+    A `did.released` webhook notification is fired for each successfully released DID.
+    """
+    if credentials_manager.STORAGE_MODE != 'db':
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Endpoint not available in 'file' storage mode."
+        )
+
+    log_enabled = settings_manager.get_setting('store_logs_enabled')
+    max_concurrency = int(settings_manager.get_setting('max_concurrent_requests', 5))
+    delay_ms = int(settings_manager.get_setting('delay_between_batches_ms', 1000))
+
+    try:
+        subaccount_creds = credentials_manager.find_and_decrypt_credential_by_groupid(
+            request.groupid, MASTER_KEY
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Could not find or access credentials for groupid '{request.groupid}': {e}"
+        )
+
+    results = []
+    did_items = request.dids
+
+    for i in range(0, len(did_items), max_concurrency):
+        batch = did_items[i:i + max_concurrency]
+        tasks = [
+            _process_single_did_release(
+                did_item=item,
+                groupid=request.groupid,
+                subaccount_creds=subaccount_creds,
+                log_enabled=log_enabled
+            )
+            for item in batch
+        ]
+        batch_results = await asyncio.gather(*tasks)
+        results.extend(batch_results)
+
+        if i + max_concurrency < len(did_items):
+            await asyncio.sleep(delay_ms / 1000.0)
+
+    success_count = sum(1 for r in results if r.status == 'success')
+    failed_count = len(results) - success_count
+
+    return DIDBatchReleaseResponse(
+        message="Batch release process completed.",
+        total_processed=len(results),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results
+    )
+
+
+async def _process_single_did_release(
+    did_item: DIDBatchReleaseItem,
+    groupid: str,
+    subaccount_creds: dict,
+    log_enabled: bool
+) -> BatchResult:
+    """
+    Processes a single DID release within a batch.
+
+    Uses asyncio.to_thread to wrap the blocking vonage_client.cancel_did call.
+    Each invocation is independently try/caught so one failure cannot cascade.
+    """
+    try:
+        country, msisdn = _resolve_country_and_msisdn(did_item.did, did_item.country)
+
+        if not country:
+            return BatchResult(
+                did=did_item.did,
+                status='failed',
+                detail="Could not auto-detect country. Please provide a 2-letter 'country' code."
+            )
+
+        result_data, status_code = await asyncio.to_thread(
+            vonage_client.cancel_did,
+            username=subaccount_creds['api_key'],
+            password=subaccount_creds['api_secret'],
+            country=country,
+            msisdn=msisdn,
+            log_enabled=log_enabled
+        )
+
+        if status_code >= 400:
+            return BatchResult(
+                did=did_item.did,
+                status='failed',
+                detail=f"Vonage API error: {result_data.get('error', 'Unknown error')}"
+            )
+
+        # Fire notification for each successful release
+        notif_payload = {
+            "groupid": groupid,
+            "did": did_item.did,
+            "country": country,
+            "subaccount_name": subaccount_creds['account_name'],
+            "subaccount_api_key": subaccount_creds['api_key']
+        }
+        notification_service.fire_and_forget("did.released", notif_payload)
+
+        return BatchResult(
+            did=did_item.did,
+            status='success',
+            detail=f"DID {msisdn} released successfully."
+        )
+
+    except Exception as e:
+        return BatchResult(
+            did=did_item.did,
+            status='failed',
+            detail=f"An unexpected internal error occurred: {str(e)}"
+        )
