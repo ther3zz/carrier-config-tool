@@ -39,14 +39,19 @@ inventory_router = APIRouter(tags=["Inventory"])
 # --- Pydantic Models ---
 
 class InventoryJobRequest(BaseModel):
-    """Request body for starting an async DID inventory job."""
+    """
+    Request body for starting an async DID inventory job.
+
+    Minimal payload to query all accounts: {}
+    To query specific accounts: {"scope": "selected", "groupids": ["123", "456"]}
+    """
     scope: str = Field(
         "all",
         description="'all' to query every stored account, or 'selected' to specify groupids."
     )
     groupids: Optional[List[str]] = Field(
         None,
-        description="List of groupids to query. Required when scope='selected'."
+        description="List of groupids to query. Only used when scope is 'selected'. Ignored otherwise."
     )
     country: Optional[str] = Field(
         None,
@@ -59,8 +64,32 @@ class InventoryJobRequest(BaseModel):
     )
     search_pattern: Optional[int] = Field(
         None,
-        description="0=starts with pattern, 1=contains, 2=ends with."
+        description="Optional. 0=starts with pattern, 1=contains, 2=ends with."
     )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "summary": "Query all accounts",
+                    "value": {}
+                },
+                {
+                    "summary": "Query specific accounts",
+                    "value": {
+                        "scope": "selected",
+                        "groupids": ["123", "456"]
+                    }
+                },
+                {
+                    "summary": "Query all accounts, US numbers only",
+                    "value": {
+                        "country": "US"
+                    }
+                }
+            ]
+        }
+    }
 
 
 class InventoryJobResponse(BaseModel):
