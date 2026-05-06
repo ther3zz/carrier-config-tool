@@ -19,6 +19,10 @@ import {
 import {
     handleFetchTransferSubaccounts, handleTransferDidsSubmit
 } from './transfer.js';
+import {
+    handleListDidsSingleSubmit, handleListDidsAllSubmit,
+    handleExportDidInventoryCsv, handleTableFilter, handleTableSort
+} from './did_inventory.js';
 
 
 /**
@@ -171,6 +175,13 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('vonageRelease_country_other_container').style.display = isManual ? 'block' : 'none';
         document.querySelector('#vonageReleaseDidForm .country-mode-status').textContent = isManual ? 'Other (Manual)' : 'US/CA (Auto-Detect)';
     });
+
+    // List Account DIDs (Inventory)
+    document.getElementById('vonageListDidsSingleForm')?.addEventListener('submit', handleListDidsSingleSubmit);
+    document.getElementById('vonageListDidsAllForm')?.addEventListener('submit', handleListDidsAllSubmit);
+    document.getElementById('vonageListDids_exportCsvBtn')?.addEventListener('click', handleExportDidInventoryCsv);
+    document.getElementById('vonageListDids_tableFilter')?.addEventListener('keyup', handleTableFilter);
+    document.getElementById('vonageListDids_table')?.querySelector('thead')?.addEventListener('click', handleTableSort);
 
     // Search Numbers in Subaccounts
     document.getElementById('vonageSearchSubaccountsForm')?.addEventListener('submit', handleVonageNumberSearchSubmit);
