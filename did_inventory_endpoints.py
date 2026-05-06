@@ -69,25 +69,9 @@ class InventoryJobRequest(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "examples": [
-                {
-                    "summary": "Query all accounts",
-                    "value": {}
-                },
-                {
-                    "summary": "Query specific accounts",
-                    "value": {
-                        "scope": "selected",
-                        "groupids": ["123", "456"]
-                    }
-                },
-                {
-                    "summary": "Query all accounts, US numbers only",
-                    "value": {
-                        "country": "US"
-                    }
-                }
-            ]
+            "example": {
+                "scope": "all"
+            }
         }
     }
 
