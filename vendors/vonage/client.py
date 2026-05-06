@@ -231,6 +231,111 @@ def _verify_did_ownership(username, password, msisdn, log_enabled=False):
     finally:
         if log_enabled: log_request_response(operation_name, request_details, response_data, status_code, account_id=username)
 
+def list_owned_dids(username, password, search_params=None, log_enabled=False):
+    """
+    Lists all DIDs owned by the given account with auto-pagination.
+
+    Fetches all pages from Vonage (max 100 per page) and returns the
+    aggregated list. Follows the same pagination pattern as list_subaccounts().
+
+    Args:
+        username: API key for authentication
+        password: API secret for authentication
+        search_params: Optional filtering dict with keys:
+            - country: 2-letter ISO country code
+            - pattern: Number pattern to match
+            - search_pattern: 0=starts with, 1=contains, 2=ends with
+            - has_application: true/false
+        log_enabled: Whether to log the API call
+
+    Returns:
+        (response_data, status_code) tuple where response_data contains:
+            - count: Total number reported by API
+            - numbers: List of owned number objects
+            - total_fetched: Actual fetched count
+    """
+    api_key_hint = f"{username[:5]}...{username[-4:]}" if len(username) > 8 else username
+    operation_name = f"Vonage List Owned DIDs ({api_key_hint})"
+    all_numbers = []
+    page_index = 1
+    api_total_count = 0
+    status_code = 200
+    response_data = {}
+    logged_early_return = False
+
+    try:
+        while True:
+            params = {'index': page_index, 'size': 100}
+
+            if search_params:
+                for key in ('country', 'pattern', 'search_pattern', 'has_application'):
+                    if key in search_params and search_params[key] is not None:
+                        params[key] = search_params[key]
+
+            request_details = {
+                "URL": NEXMO_OWNED_API_URL,
+                "Method": "GET",
+                "Account": api_key_hint,
+                "Params": params,
+                "Page": page_index
+            }
+
+            response = requests.get(
+                NEXMO_OWNED_API_URL,
+                auth=(username, password),
+                params=params,
+                headers={'Accept': 'application/json'},
+                timeout=20
+            )
+            status_code = response.status_code
+
+            if status_code >= 400:
+                try:
+                    response_data = response.json()
+                except Exception:
+                    response_data = {"error": f"HTTP {status_code}"}
+                if log_enabled:
+                    log_request_response(operation_name, request_details, response_data, status_code, account_id=api_key_hint)
+                logged_early_return = True
+                return response_data, status_code
+
+            data = response.json()
+
+            if page_index == 1:
+                api_total_count = data.get('count', 0)
+
+            page_numbers = data.get('numbers', [])
+            if not page_numbers:
+                break
+
+            all_numbers.extend(page_numbers)
+
+            if len(all_numbers) >= api_total_count:
+                break
+
+            page_index += 1
+
+        response_data = {
+            'count': api_total_count,
+            'numbers': all_numbers,
+            'total_fetched': len(all_numbers)
+        }
+
+    except requests.exceptions.RequestException as e:
+        response_data, status_code = _handle_vonage_error(e, operation_name)
+    except Exception as e:
+        response_data, status_code = _handle_vonage_error(e, operation_name)
+    finally:
+        if log_enabled and not logged_early_return:
+            log_request_response(
+                operation_name,
+                {"Method": "GET", "TotalPages": page_index, "TotalFetched": len(all_numbers)},
+                response_data, status_code, account_id=api_key_hint
+            )
+
+    return response_data, status_code
+
+
 def buy_did(username, password, country, msisdn, target_api_key=None, log_enabled=False, treat_420_as_success=False, verify_on_420=False):
     buy_payload = {'country': country, 'msisdn': msisdn}
     if target_api_key: buy_payload['target_api_key'] = target_api_key
