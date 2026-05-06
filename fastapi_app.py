@@ -16,6 +16,7 @@ from utils import notification_service
 from vendors.vonage import client as vonage_client
 from utils import db_manager
 from transfer_endpoints import transfer_router
+from did_inventory_endpoints import inventory_router
 
 # --- Environment and Configuration ---
 load_dotenv()
@@ -60,6 +61,12 @@ async def verify_api_key(api_key_header: str = Security(API_KEY_HEADER)):
 # --- Include Transfer Router (separate module for modularity) ---
 app.include_router(
     transfer_router,
+    dependencies=[Depends(verify_ip_address), Depends(verify_api_key)]
+)
+
+# --- Include Inventory Router ---
+app.include_router(
+    inventory_router,
     dependencies=[Depends(verify_ip_address), Depends(verify_api_key)]
 )
 
