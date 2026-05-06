@@ -1,5 +1,3 @@
-# --- START OF FILE app.py ---
-
 import os
 import io
 import zipfile
@@ -18,6 +16,7 @@ from utils import encryption
 from utils import settings_manager
 from vendors.vonage.routes import vonage_bp
 from vendors.vonage.transfer_routes import vonage_transfer_bp
+from vendors.vonage.did_inventory_routes import vonage_did_inventory_bp
 from routes.notifications import notifications_bp
 
 
@@ -31,6 +30,7 @@ NPA_DATA_CONFIG_FILE = os.path.join('config', 'npa_data.json')
 # Register Blueprints
 app.register_blueprint(vonage_bp)
 app.register_blueprint(vonage_transfer_bp)
+app.register_blueprint(vonage_did_inventory_bp)
 
 app.register_blueprint(notifications_bp)
 
